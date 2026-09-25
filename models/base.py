@@ -1,5 +1,6 @@
 import copy
 import logging
+import re
 import numpy as np
 import torch
 from torch import nn
@@ -139,7 +140,66 @@ class BaseLearner(object):
             "tasks": self._cur_task,
             "model_state_dict": self._network.state_dict(),
         }
+        if hasattr(self, "qgtm"):
+            save_dict["qgtm_state_dict"] = self.qgtm.state_dict()
+        if hasattr(self, "task_embeddings"):
+            save_dict["task_embeddings"] = [embedding.cpu() for embedding in self.task_embeddings]
+        for name in ("_known_classes", "_total_classes", "cnn_curve", "nme_curve"):
+            if hasattr(self, name):
+                save_dict[name] = getattr(self, name)
         torch.save(save_dict, filename)
+
+    def load_checkpoint(self, filename):
+        checkpoint = torch.load(filename, map_location="cpu")
+        state_dict = checkpoint["model_state_dict"]
+
+        adapter_indices = {
+            int(match.group(1))
+            for key in state_dict
+            if (match := re.search(r"convnet\.blocks\.0\.adapters\.(\d+)\.", key))
+        }
+        adapter_count = max(adapter_indices, default=0) + 1
+        for _ in range(adapter_count - 1):
+            self._network.convnet.add_adapter()
+
+        head_sizes = {}
+        for key, value in state_dict.items():
+            match = re.match(r"fc\.heads\.(\d+)\.0\.weight$", key)
+            if match:
+                head_sizes[int(match.group(1))] = value.shape[0]
+        if not head_sizes:
+            raise ValueError(f"Checkpoint does not contain classifier heads: {filename}")
+
+        ordered_head_sizes = [head_sizes[index] for index in sorted(head_sizes)]
+        self._network.update_fc(ordered_head_sizes[0])
+        for head_size in ordered_head_sizes[1:]:
+            self._network.update_fc(head_size)
+        self._network.load_state_dict(state_dict)
+
+        if hasattr(self, "qgtm") and "qgtm_state_dict" in checkpoint:
+            self.qgtm.load_state_dict(checkpoint["qgtm_state_dict"])
+        if hasattr(self, "task_embeddings"):
+            saved_embeddings = checkpoint.get("task_embeddings")
+            if saved_embeddings is not None:
+                self.task_embeddings = [embedding.to(self._device) for embedding in saved_embeddings]
+
+        self._cur_task = int(checkpoint["tasks"])
+        self._total_classes = int(checkpoint.get("_total_classes", sum(ordered_head_sizes)))
+        self._known_classes = int(checkpoint.get("_known_classes", self._total_classes))
+        for name in ("cnn_curve", "nme_curve"):
+            if name in checkpoint:
+                setattr(self, name, checkpoint[name])
+
+        if hasattr(self, "qgtm") and hasattr(self, "task_embeddings") and not self.task_embeddings:
+            self.task_embeddings = [
+                self.qgtm.extract_task_embedding(self._network, task_idx).detach().to(self._device)
+                for task_idx in range(self._cur_task + 1)
+            ]
+
+        self._network.to(self._device)
+        if hasattr(self, "qgtm"):
+            self.qgtm.to(self._device)
+        return self._cur_task
 
     def after_task(self):
         pass
