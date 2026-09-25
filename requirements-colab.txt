@@ -1,0 +1,7 @@
+# Google Colab already provides a CUDA-compatible torch and torchvision pair.
+# Do not install requirements.txt here: it pins a machine-specific CUDA wheel.
+# timm 0.6.x fails to import under Python 3.13 because of its old dataclass definitions.
+timm>=1.0.0,<2.0.0
+easydict==1.13
+scipy>=1.10
+tqdm>=4.64
