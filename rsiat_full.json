@@ -26,10 +26,11 @@
     1993
   ],
   "init_epochs": 10,
+  "epochs": 20,
   "warmup_epoch": 7,
   "inc_epochs": 30,
   "ca_epochs": 10,
-  "init_lr": 0.018461273665041644,
+  "init_lr": 0.021,
   "batch_size": 64,
   "weight_decay": 0.0001714081878951529,
   "min_lr": 0,
@@ -45,5 +46,5 @@
   "ae_code_dims": 256,
   "ae_init_lr": 0.0005611742230603744,
   "ae_weight_decay": 0.0029339295871570244,
-  "output_root": "/kaggle/working/RSIAT_outputs"
+  "output_root": "/kaggle/working/RSIAT/outputs"
 }
