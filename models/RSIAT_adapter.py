@@ -32,7 +32,12 @@ class Learner(BaseLearner):
         self.temperature = args.get("temperature", 1.0)
         
         # Quantum-Gated Task Modulation Module (QGTM)
-        self.qgtm = QGTM(num_qubits=6, num_layers=2, temperature=self.temperature, svd_dim=12)
+        self.qgtm = QGTM(
+            num_qubits=args.get("num_qubits", 6),
+            num_layers=args.get("num_layers", 2),
+            temperature=self.temperature,
+            svd_dim=args.get("svd_dim", 12),
+        )
         self.task_embeddings = []
 
     def after_task(self):
