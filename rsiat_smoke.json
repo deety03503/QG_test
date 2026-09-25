@@ -27,10 +27,11 @@
     1993
   ],
   "init_epochs": 1,
+  "epochs": 10,
   "warmup_epoch": 1,
   "inc_epochs": 1,
   "ca_epochs": 1,
-  "init_lr": 0.018461273665041644,
+  "init_lr": 0.021,
   "batch_size": 16,
   "weight_decay": 0.0001714081878951529,
   "min_lr": 0,
