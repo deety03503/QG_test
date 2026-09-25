@@ -116,7 +116,10 @@ class Block(nn.Module):
             adapt_out = 0
             for i, w in enumerate(adapter_weights):
                 if i < len(self.adapters):
-                    adapt_out = adapt_out + w * self.adapters[i](x)
+                    adapter_out = self.adapters[i](x)
+                    if torch.is_tensor(w) and w.ndim == 1:
+                        w = w.view(-1, 1, 1)
+                    adapt_out = adapt_out + w * adapter_out
         else:
             # Mặc định dùng adapter cuối cùng (task hiện tại)
             adapt_out = self.adapters[-1](x)

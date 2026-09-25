@@ -62,7 +62,10 @@ class Learner(BaseLearner):
     def incremental_train(self, data_manager):
         self._cur_task += 1
         self._total_classes = self._known_classes + data_manager.get_task_size(self._cur_task)
-        self._network.update_fc(data_manager.get_task_size(self._cur_task))
+        self._network.update_fc(
+            data_manager.get_task_size(self._cur_task),
+            freeze_old=self._cur_task > 0,
+        )
         self._network.to(self._device)
         self.qgtm.to(self._device)
 
@@ -103,6 +106,9 @@ class Learner(BaseLearner):
         prog_bar = tqdm(range(epochs))
         for epoch in prog_bar:
             self._network.train()
+            # Module.train() recursively re-enables dropout in frozen adapters.
+            # Keep old adapters deterministic while only the newest adapter learns.
+            self._set_old_adapters_eval()
             self.qgtm.train()
             losses = 0.0
             correct, total = 0, 0
@@ -180,11 +186,13 @@ class Learner(BaseLearner):
                     h_t = model.convnet.forward_features(inputs, task_idx=0)
                     alpha = self.qgtm(h_t, self.task_embeddings) # [B, T_old]
                     
-                    # Adaptive adapter fusion
-                    avg_alpha = alpha.mean(dim=0).cpu().numpy()
-                    # Mở rộng trọng số cho adapter hiện tại
-                    weights = list(avg_alpha) + [1.0]
-                    norm_weights = [w / sum(weights) for w in weights]
+                    # Adaptive adapter fusion: preserve a separate gate per sample.
+                    current_weight = torch.ones(
+                        alpha.size(0), 1, device=alpha.device, dtype=alpha.dtype
+                    )
+                    weights = torch.cat((alpha, current_weight), dim=1)
+                    norm_weights = weights / weights.sum(dim=1, keepdim=True).clamp_min(1e-8)
+                    norm_weights = norm_weights.unbind(dim=1)
                     
                     outputs = model.convnet.forward_features(inputs, adapter_weights=norm_weights)
                     logits = model.fc(outputs)["logits"]
@@ -195,3 +203,9 @@ class Learner(BaseLearner):
                 correct += (predicts == targets).sum().cpu()
                 total += len(targets)
         return np.around(tensor2numpy(correct) * 100 / total, decimals=2)
+
+    def _set_old_adapters_eval(self):
+        """Disable dropout in frozen adapters after switching the network to train mode."""
+        for block in self._network.convnet.blocks:
+            for adapter in block.adapters[:-1]:
+                adapter.eval()
