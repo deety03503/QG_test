@@ -10,7 +10,7 @@
     "increment": 10,
     "model_name": "adapter",
     "convnet_type": "pretrained_vit_b16_224_in21k_adapter",
-    "device": ["0"],
+    "device": ["0", "1"],
     "seed": [1993],
     
     "epochs":20,
