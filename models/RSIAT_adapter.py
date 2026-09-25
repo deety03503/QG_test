@@ -21,7 +21,8 @@ class Learner(BaseLearner):
         
         self._network = SimpleVitNet(args, True)
         self.batch_size = args["batch_size"]
-        self.init_lr = args.get("init_lr", 0.05)
+        self.default_lr = args.get("default_lr", args.get("init_lr", 0.05))
+        self.init_lr = self.default_lr
         self.weight_decay = args.get("weight_decay", 0.0005)
         self.min_lr = args.get("min_lr", 1e-8)
         self.args = args
@@ -39,6 +40,16 @@ class Learner(BaseLearner):
             svd_dim=args.get("svd_dim", 12),
         )
         self.task_embeddings = []
+
+    def _get_task_epochs(self):
+        if self._cur_task == 0:
+            return self.args.get("base_epochs", self.args.get("default_epochs", 20))
+        return self.args.get("inc_epochs", self.args.get("default_epochs", 20))
+
+    def _get_task_lr(self):
+        if self._cur_task == 0:
+            return self.args.get("base_lr", self.default_lr)
+        return self.args.get("inc_lr", self.default_lr)
 
     def after_task(self):
         self._known_classes = self._total_classes
@@ -77,15 +88,16 @@ class Learner(BaseLearner):
 
     def _train(self, train_loader, test_loader):
         self._network.to(self._device)
-        epochs = self.args.get("epochs", 20)
+        epochs = self._get_task_epochs()
+        learning_rate = self._get_task_lr()
 
         # Tập hợp các tham số cần optimize: Adapter mới + QGTM + Classifier FC
         trainable_params = [
-            {'params': [p for name, p in self._network.named_parameters() if p.requires_grad], 'lr': self.init_lr, 'weight_decay': self.weight_decay},
-            {'params': self.qgtm.parameters(), 'lr': self.init_lr, 'weight_decay': self.weight_decay}
+            {'params': [p for name, p in self._network.named_parameters() if p.requires_grad], 'lr': learning_rate, 'weight_decay': self.weight_decay},
+            {'params': self.qgtm.parameters(), 'lr': learning_rate, 'weight_decay': self.weight_decay}
         ]
 
-        optimizer = optim.SGD(trainable_params, lr=self.init_lr, momentum=0.9, weight_decay=self.weight_decay)
+        optimizer = optim.SGD(trainable_params, lr=learning_rate, momentum=0.9, weight_decay=self.weight_decay)
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=self.min_lr)
 
         prog_bar = tqdm(range(epochs))

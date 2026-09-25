@@ -16,9 +16,13 @@
   "seed": [
     1993
   ],
-  "epochs": 10,
+  "base_epochs": 10,
+  "inc_epochs": 10,
+  "default_epochs": 10,
   "max_tasks_per_run": 1,
-  "init_lr": 0.05,
+  "base_lr": 0.05,
+  "inc_lr": 0.05,
+  "default_lr": 0.05,
   "batch_size": 16,
   "weight_decay": 0.0001,
   "min_lr": 0,
