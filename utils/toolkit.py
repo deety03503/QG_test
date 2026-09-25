@@ -1,7 +1,5 @@
-import os
 import numpy as np
 import torch
-import torch.nn as nn
 import logging
 
 def count_parameters(model, trainable=False):
@@ -9,30 +7,8 @@ def count_parameters(model, trainable=False):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
     return sum(p.numel() for p in model.parameters())
 
-def log_count_parameter(param_groups):
-    all_params = []
-    for g in param_groups:
-        all_params += list(g['params'])
-
-    all_count = sum(p.numel() for p in all_params)
-    trainable_count = sum(p.numel() for p in all_params if p.requires_grad)
-
-    logging.info('All params: {}'.format(all_count))
-    logging.info('Trainable params: {}'.format(trainable_count))
-
 def tensor2numpy(x):
     return x.cpu().data.numpy() if x.is_cuda else x.data.numpy()
-
-
-def target2onehot(targets, n_classes):
-    onehot = torch.zeros(targets.shape[0], n_classes).to(targets.device)
-    onehot.scatter_(dim=1, index=targets.long().view(-1, 1), value=1.0)
-    return onehot
-
-
-def makedirs(path):
-    if not os.path.exists(path):
-        os.makedirs(path)
 
 
 def accuracy(y_pred, y_true, nb_old, increment=10):
@@ -82,27 +58,3 @@ def split_images_labels(imgs):
         labels.append(item[1])
 
     return np.array(images), np.array(labels)
-
-class BaseAttention(nn.Module):
-
-    def __init__(self):
-        super(BaseAttention, self).__init__()
-
-    def forward(self, x):
-        encoded_x = self.encoder(x)
-        reconstructed_x = self.decoder(encoded_x)
-        return reconstructed_x + x
-
-class AutoencoderSigmoid(BaseAttention):
-    def __init__(self, input_dims=768, code_dims=384):
-        super(AutoencoderSigmoid, self).__init__()
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dims, 64),
-            nn.GELU(),
-            nn.Linear(64, code_dims),
-            nn.GELU())
-        self.decoder = nn.Sequential(
-            nn.Linear(code_dims, 64),
-            nn.GELU(),
-            nn.Linear(64, input_dims),
-            nn.Sigmoid())
