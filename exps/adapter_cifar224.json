@@ -14,9 +14,9 @@
     "seed": [1993],
     
     "base_epochs": 20,
-    "inc_epochs": 20,
+    "inc_epochs": 25,
     "default_epochs": 20,
-    "base_lr": 0.05,
+    "base_lr": 0.1,
     "inc_lr": 0.05,
     "default_lr": 0.05,
     "batch_size":32,
