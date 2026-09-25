@@ -59,7 +59,7 @@ class Learner(BaseLearner):
         if self._cur_task > 0:
             logging.info(f"Freezing old adapters and adding a new adapter for task {self._cur_task}")
             # Trích xuất task embedding cho task cũ trước khi thêm adapter mới
-            prev_task_emb = self.qgtm.extract_task_embedding(self._network, self._cur_task - 1)
+            prev_task_emb = self.qgtm.extract_task_embedding(self._network, self._cur_task - 1).detach()
             self.task_embeddings.append(prev_task_emb)
             
             # Thêm adapter mới

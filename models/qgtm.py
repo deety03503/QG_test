@@ -53,6 +53,16 @@ class QGTM(nn.Module):
         except Exception:
             task_vec = S_i.mean(dim=1)
 
+        # Collapse the flattened adapter summary back to the ViT feature width.
+        # Each adapter weight contains repeated 768-wide feature slices.
+        feature_dim = self.proj_task.in_features
+        if task_vec.numel() % feature_dim != 0:
+            raise ValueError(
+                f"Task embedding size {task_vec.numel()} is not divisible by "
+                f"the feature dimension {feature_dim}."
+            )
+        task_vec = task_vec.reshape(-1, feature_dim).mean(dim=0)
+
         # Normalize & project sang space num_qubits
         norm_task_vec = F.normalize(task_vec, p=2, dim=0)
         task_angle = self.proj_task(norm_task_vec.unsqueeze(0)).squeeze(0)
