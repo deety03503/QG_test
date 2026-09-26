@@ -29,7 +29,8 @@ def get_convnet(args, pretrained=False):
                 ffn_option="parallel",
                 ffn_adapter_layernorm_option="none",
                 ffn_adapter_init_option="lora",
-                ffn_adapter_scalar="0.1",
+                ffn_adapter_scalar="1.0",
+                ffn_adapter_dropout=0.0,
                 ffn_num=ffn_num,
                 d_model=768,
                 # VPT related
@@ -169,7 +170,11 @@ class SimpleVitNet(BaseNet):
             self.fc.update(nb_classes, freeze_old=freeze_old)
 
     def generate_fc(self, in_dim, out_dim):
-        fc = SimpleContinualLinear(in_dim, out_dim)
+        fc = SimpleContinualLinear(
+            in_dim,
+            out_dim,
+            with_norm=getattr(self, "classifier_with_norm", False),
+        )
         return fc
 
     def extract_vector(self, x):

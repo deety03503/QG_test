@@ -46,7 +46,7 @@ class Attention(nn.Module):
 
 
 class Adapter(nn.Module):
-    def __init__(self, config=None, d_model=768, bottleneck=64, dropout=0.1, adapter_scalar="0.1"):
+    def __init__(self, config=None, d_model=768, bottleneck=64, dropout=0.0, adapter_scalar="1.0"):
         super().__init__()
         self.n_embd = config.d_model if (config and hasattr(config, 'd_model')) else d_model
         self.down_size = config.ffn_num if (config and hasattr(config, 'ffn_num')) else bottleneck
@@ -55,7 +55,7 @@ class Adapter(nn.Module):
         self.non_linear_func = nn.ReLU()
         self.up_proj = nn.Linear(self.down_size, self.n_embd)
         self.dropout = dropout
-        self.scale = float(adapter_scalar) if isinstance(adapter_scalar, (str, float, int)) else 0.1
+        self.scale = float(adapter_scalar) if isinstance(adapter_scalar, (str, float, int)) else 1.0
 
         with torch.no_grad():
             nn.init.kaiming_uniform_(self.down_proj.weight, a=math.sqrt(5))
@@ -89,7 +89,13 @@ class Block(nn.Module):
 
         # ModuleList chứa các adapter cho từng task
         self.adapters = nn.ModuleList([
-            Adapter(self.config, d_model=dim, bottleneck=getattr(config, 'ffn_num', 64))
+            Adapter(
+                self.config,
+                d_model=dim,
+                bottleneck=getattr(config, 'ffn_num', 64),
+                dropout=getattr(config, 'ffn_adapter_dropout', 0.0),
+                adapter_scalar=getattr(config, 'ffn_adapter_scalar', '1.0'),
+            )
         ])
 
     def add_adapter(self):
@@ -100,29 +106,36 @@ class Block(nn.Module):
             adapter.eval()
 
         # Tạo adapter mới
-        new_adapter = Adapter(self.config, d_model=self.fc1.in_features, bottleneck=getattr(self.config, 'ffn_num', 64))
+        new_adapter = Adapter(
+            self.config,
+            d_model=self.fc1.in_features,
+            bottleneck=getattr(self.config, 'ffn_num', 64),
+            dropout=getattr(self.config, 'ffn_adapter_dropout', 0.0),
+            adapter_scalar=getattr(self.config, 'ffn_adapter_scalar', '1.0'),
+        )
         self.adapters.append(new_adapter)
 
     def forward(self, x, task_idx=None, adapter_weights=None):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         residual = x
-        mlp_out = self.mlp_drop(self.fc2(self.act(self.fc1(self.norm2(x)))))
+        mlp_input = self.norm2(x)
+        mlp_out = self.mlp_drop(self.fc2(self.act(self.fc1(mlp_input))))
 
         if task_idx is not None:
             # Chọn adapter cụ thể (ví dụ task_idx = 0 cho Base Adapter A1)
-            adapt_out = self.adapters[task_idx](x)
+            adapt_out = self.adapters[task_idx](mlp_input)
         elif adapter_weights is not None:
             # Trọng số kết hợp các adapters (Task-interaction fusion)
             adapt_out = 0
             for i, w in enumerate(adapter_weights):
                 if i < len(self.adapters):
-                    adapter_out = self.adapters[i](x)
+                    adapter_out = self.adapters[i](mlp_input)
                     if torch.is_tensor(w) and w.ndim == 1:
                         w = w.view(-1, 1, 1)
                     adapt_out = adapt_out + w * adapter_out
         else:
             # Mặc định dùng adapter cuối cùng (task hiện tại)
-            adapt_out = self.adapters[-1](x)
+            adapt_out = self.adapters[-1](mlp_input)
 
         x = residual + self.drop_path(mlp_out + adapt_out)
         return x

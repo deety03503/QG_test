@@ -52,7 +52,7 @@ class SimpleContinualLinear(nn.Module):
         out = []
         for ti in range(len(self.heads)):
             fc_inp = x[ti] if self.feat_expand else x
-            out.append(1*(F.linear(F.normalize(fc_inp, p=2, dim=1),F.normalize(self.heads[ti][0].weight, p=2, dim=1))))
+            out.append(self.heads[ti](fc_inp))
         out = {'logits': torch.cat(out, dim=1)}
         return out
 

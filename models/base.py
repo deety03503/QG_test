@@ -164,12 +164,16 @@ class BaseLearner(object):
 
         head_sizes = {}
         for key, value in state_dict.items():
-            match = re.match(r"fc\.heads\.(\d+)\.0\.weight$", key)
-            if match:
+            match = re.match(r"fc\.heads\.(\d+)\.\d+\.weight$", key)
+            if match and value.ndim == 2:
                 head_sizes[int(match.group(1))] = value.shape[0]
         if not head_sizes:
             raise ValueError(f"Checkpoint does not contain classifier heads: {filename}")
 
+        first_head_norm_key = "fc.heads.0.0.weight"
+        self._network.classifier_with_norm = (
+            first_head_norm_key in state_dict and state_dict[first_head_norm_key].ndim == 1
+        )
         ordered_head_sizes = [head_sizes[index] for index in sorted(head_sizes)]
         self._network.update_fc(ordered_head_sizes[0])
         for head_size in ordered_head_sizes[1:]:
@@ -190,10 +194,15 @@ class BaseLearner(object):
             if name in checkpoint:
                 setattr(self, name, checkpoint[name])
 
-        if hasattr(self, "qgtm") and hasattr(self, "task_embeddings") and not self.task_embeddings:
+        if (
+            hasattr(self, "qgtm")
+            and hasattr(self, "task_embeddings")
+            and not self.task_embeddings
+            and self._cur_task > 0
+        ):
             self.task_embeddings = [
                 self.qgtm.extract_task_embedding(self._network, task_idx).detach().to(self._device)
-                for task_idx in range(self._cur_task + 1)
+                for task_idx in range(self._cur_task)
             ]
 
         self._network.to(self._device)
@@ -203,6 +212,12 @@ class BaseLearner(object):
 
     def after_task(self):
         pass
+
+    def _prepare_inference(self, model):
+        return None
+
+    def _predict_logits(self, model, inputs, inference_state=None):
+        return model(inputs)["logits"]
 
     def _evaluate(self, y_pred, y_true):
         ret = {}
@@ -236,11 +251,12 @@ class BaseLearner(object):
 
     def _compute_accuracy(self, model, loader):
         model.eval()
+        inference_state = self._prepare_inference(model)
         correct, total = 0, 0
         for i, (_, inputs, targets) in enumerate(loader):
             inputs = inputs.to(self._device)
             with torch.no_grad():
-                outputs = model(inputs)["logits"]
+                outputs = self._predict_logits(model, inputs, inference_state)
             predicts = torch.max(outputs, dim=1)[1]
             correct += (predicts.cpu() == targets).sum()
             total += len(targets)
@@ -249,11 +265,12 @@ class BaseLearner(object):
 
     def _eval_cnn(self, loader):
         self._network.eval()
+        inference_state = self._prepare_inference(self._network)
         y_pred, y_true = [], []
         for _, (_, inputs, targets) in enumerate(loader):
             inputs = inputs.to(self._device)
             with torch.no_grad():
-                outputs = self._network(inputs)["logits"]
+                outputs = self._predict_logits(self._network, inputs, inference_state)
             predicts = torch.topk(
                 outputs, k=self.topk, dim=1, largest=True, sorted=True
             )[

@@ -173,36 +173,26 @@ class Learner(BaseLearner):
 
         logging.info(info)
 
-    def _compute_accuracy(self, model, loader):
-        model.eval()
+    def _prepare_inference(self, model):
         self.qgtm.eval()
-        correct, total = 0, 0
-        with torch.no_grad():
-            for _, inputs, targets in loader:
-                inputs, targets = inputs.to(self._device), targets.to(self._device)
-                
-                # Trong quá trình inference: nếu có nhiều task, dùng QGTM để tính trọng số adaptive fusion
-                if self._cur_task > 0 and len(self.task_embeddings) > 0:
-                    h_t = model.convnet.forward_features(inputs, task_idx=0)
-                    alpha = self.qgtm(h_t, self.task_embeddings) # [B, T_old]
-                    
-                    # Adaptive adapter fusion: preserve a separate gate per sample.
-                    current_weight = torch.ones(
-                        alpha.size(0), 1, device=alpha.device, dtype=alpha.dtype
-                    )
-                    weights = torch.cat((alpha, current_weight), dim=1)
-                    norm_weights = weights / weights.sum(dim=1, keepdim=True).clamp_min(1e-8)
-                    norm_weights = norm_weights.unbind(dim=1)
-                    
-                    outputs = model.convnet.forward_features(inputs, adapter_weights=norm_weights)
-                    logits = model.fc(outputs)["logits"]
-                else:
-                    logits = model(inputs)["logits"]
+        if self._cur_task > 0 and self.task_embeddings:
+            with torch.no_grad():
+                current_task_embedding = self.qgtm.extract_task_embedding(
+                    model, self._cur_task
+                )
+            return [*self.task_embeddings, current_task_embedding]
+        return None
 
-                predicts = torch.max(logits, dim=1)[1]
-                correct += (predicts == targets).sum().cpu()
-                total += len(targets)
-        return np.around(tensor2numpy(correct) * 100 / total, decimals=2)
+    def _predict_logits(self, model, inputs, inference_state=None):
+        if inference_state is None:
+            return model(inputs)["logits"]
+
+        h_t = model.convnet.forward_features(inputs, task_idx=0)
+        alpha = self.qgtm(h_t, inference_state)
+        outputs = model.convnet.forward_features(
+            inputs, adapter_weights=alpha.unbind(dim=1)
+        )
+        return model.fc(outputs)["logits"]
 
     def _set_old_adapters_eval(self):
         """Disable dropout in frozen adapters after switching the network to train mode."""
