@@ -1,0 +1,34 @@
+"""Optimization objectives used by QKD."""
+
+import torch
+from torch import Tensor
+from torch.nn import functional as F
+
+
+def task_interaction_distillation(
+    historical_logits: Tensor,
+    current_logits: Tensor,
+    relevance: Tensor,
+) -> Tensor:
+    """Compute relevance-weighted KL(old adapter || current adapter).
+
+    ``historical_logits`` has shape ``(batch, tasks, classes)``;
+    ``current_logits`` has shape ``(batch, classes)``; and ``relevance``
+    has shape ``(batch, tasks)``. The paper defines KL between softmax
+    outputs without a distillation temperature.
+    """
+    if historical_logits.ndim != 3 or current_logits.ndim != 2:
+        raise ValueError("logits must have shapes (batch, tasks, classes) and (batch, classes)")
+    expected_relevance_shape = historical_logits.shape[:2]
+    if relevance.shape != expected_relevance_shape:
+        raise ValueError("relevance must have shape (batch, tasks)")
+    if historical_logits.shape[0] != current_logits.shape[0]:
+        raise ValueError("historical and current logits must share the batch dimension")
+    if historical_logits.shape[2] != current_logits.shape[1]:
+        raise ValueError("historical and current logits must share the class dimension")
+
+    old_log_probs = F.log_softmax(historical_logits, dim=-1)
+    old_probs = old_log_probs.exp()
+    new_log_probs = F.log_softmax(current_logits, dim=-1).unsqueeze(1)
+    per_task_kl = (old_probs * (old_log_probs - new_log_probs)).sum(dim=-1)
+    return (per_task_kl * relevance).sum(dim=1).mean()

@@ -1,0 +1,38 @@
+seed: 1993
+benchmark: cifar100
+class_order_seed: 1993
+initial_classes: 0
+incremental_classes: 10
+exemplar_budget: 0
+
+backbone:
+  model_name: vit_base_patch16_224
+  checkpoint_path: ${QKD_VIT_B16_IN21K_WEIGHTS}
+  pretrained_source: imagenet21k
+  frozen: true
+
+adapter:
+  bottleneck_dim: 64
+  insertion: parallel_to_mlp
+  freeze_previous_tasks: true
+
+qgtm:
+  svd_dim: 12
+  qubits: 9
+  circuit_layers: 1
+  temperature: 1.0
+  backend: pending
+
+training:
+  batch_size: 32
+  epochs_per_task: 20
+  optimizer: sgd
+  learning_rate: 0.05
+  scheduler: cosine
+  lambda_kd: 1.0
+  lambda_sparse: 0.05
+
+evaluation:
+  metrics: [average_accuracy, final_accuracy]
+  task_agnostic: true
+  output_dir: outputs/cifar100_b0_inc10
