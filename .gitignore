@@ -4,11 +4,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
-data/
 datasets/
-checkpoints/
 outputs/
 logs/
-*.pth
-*.pt
-*.ckpt
