@@ -22,7 +22,7 @@ from qkd.engine.trainer import IncrementalTrainer
 from qkd.metrics import average_incremental_accuracy, final_accuracy
 from qkd.models.vit import PretrainedViT
 
-DEFAULT_MODEL_NAME = "vit_base_patch16_224.augreg_in21k"
+DEFAULT_MODEL_NAME = "vit_base_patch16_224"
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,7 +34,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--checkpoint-path",
-        default=os.environ.get("QKD_VIT_B16_IN21K_WEIGHTS"),
+        default=os.environ.get(
+            "QKD_VIT_B16_WEIGHTS",
+            os.environ.get("QKD_VIT_B16_IN21K_WEIGHTS"),
+        ),
         help="Optional local ViT checkpoint. If omitted, use --pretrained or random initialization.",
     )
     parser.add_argument(
@@ -49,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model-name",
         default=DEFAULT_MODEL_NAME,
-        help="timm model/weight tag; the default is pretrained on ImageNet-21K.",
+        help="timm model/weight tag used when loading pretrained ViT weights.",
     )
     parser.add_argument("--seed", type=int, default=1993)
     parser.add_argument("--batch-size", type=int, default=32)
@@ -150,15 +153,7 @@ def create_encoder(args: argparse.Namespace) -> PretrainedViT:
     import timm
 
     if args.pretrained:
-        if "in21k" not in args.model_name.lower():
-            raise ValueError(
-                "--pretrained requires a timm model name/tag trained on "
-                "ImageNet-21K (containing 'in21k')"
-            )
-        print(
-            f"Loading ImageNet-21K pretrained weights "
-            f"({args.model_name}) from timm."
-        )
+        print(f"Loading pretrained ViT weights ({args.model_name}) from timm.")
         backbone = timm.create_model(args.model_name, pretrained=True, num_classes=0)
     else:
         print("No pretrained weights requested; initializing the backbone randomly.")

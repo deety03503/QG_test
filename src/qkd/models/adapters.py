@@ -38,9 +38,12 @@ class RoutedAdapterMLP(nn.Module):
         reference_parameter = next(self.base_mlp.parameters(), None)
         if reference_parameter is not None:
             adapter.to(device=reference_parameter.device, dtype=reference_parameter.dtype)
+        if self.adapters:
+            adapter.load_state_dict(self.adapters[0].state_dict())
         for old_adapter in self.adapters:
             for parameter in old_adapter.parameters():
                 parameter.requires_grad_(False)
+        adapter.requires_grad_(True)
         self.adapters.append(adapter)
         return adapter
 

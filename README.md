@@ -27,13 +27,12 @@ Run the tests with:
 python -m pytest
 ```
 
-For paper-faithful runs, set `QKD_VIT_B16_IN21K_WEIGHTS` to the exact local
-ViT-B/16-IN21K checkpoint. `main.py` validates checkpoint/model key
-compatibility. To download pretrained weights through `timm`, pass
-`--pretrained`; the default model is explicitly
-`vit_base_patch16_224.augreg_in21k` (ImageNet-21K, not the ImageNet-1K
-fine-tuned variant). The first run requires network access. Preprocessing is
-resolved from that model's timm config, including its ImageNet-21K mean/std.
+Set `QKD_VIT_B16_WEIGHTS` (or the legacy
+`QKD_VIT_B16_IN21K_WEIGHTS`) to use a local ViT checkpoint.
+`main.py` validates checkpoint/model key compatibility. To download the
+default ViT-B/16 pretrained weights through `timm`, pass `--pretrained`; the
+default model is `vit_base_patch16_224`. The first run requires network access.
+Preprocessing is resolved from the selected model's timm config.
 Without a checkpoint or `--pretrained`, the backbone is randomly initialized
 and then frozen, which is not paper-comparable. A configured but missing local
 checkpoint is an error; it does not silently fall back to random weights.
@@ -63,12 +62,11 @@ term as the L1 norm of softmax relevance weights; this expression is retained
 literally, although it equals one and therefore does not itself encourage
 sparsity.
 
-Set `QKD_VIT_B16_IN21K_WEIGHTS` or pass `--checkpoint-path <file>` to load a
-local pretrained backbone. To use timm's ImageNet-21K weights, run with
-`--pretrained`; `--model-name` defaults to
-`vit_base_patch16_224.augreg_in21k` and rejects non-IN21K tags when downloading.
-Training settings can be changed with CLI options; the Kaggle notebook
-supports either local weights or timm's pretrained download.
+Set `QKD_VIT_B16_WEIGHTS` or pass `--checkpoint-path <file>` to load a local
+pretrained backbone. To use timm's pretrained ViT-B/16 weights, run with
+`--pretrained`; `--model-name` defaults to `vit_base_patch16_224`. Training
+settings can be changed with CLI options; the Kaggle notebook supports either
+local weights or timm's pretrained download.
 
 ```python
 import os
@@ -76,12 +74,12 @@ import os
 from qkd.models.vit import PretrainedViT
 
 encoder = PretrainedViT.from_pretrained(
-  checkpoint_path=os.environ["QKD_VIT_B16_IN21K_WEIGHTS"],
+  checkpoint_path=os.environ["QKD_VIT_B16_WEIGHTS"],
   model_name="vit_base_patch16_224",
   bottleneck_dim=64,
 )
 features = encoder.forward_features(images)  # Uses the newest task adapter.
-encoder.add_task_adapter()  # Call once when a new incremental task arrives.
+encoder.add_task_adapter()  # Later adapters copy adapter 0 before training.
 features = encoder.forward_features(images, adapter_weights=task_weights)
 ```
 

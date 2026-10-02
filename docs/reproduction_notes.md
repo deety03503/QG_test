@@ -18,8 +18,8 @@ exemplar count, and total memory budget.
 
 | Component | Setting |
 | --- | --- |
-| Backbone | Frozen ViT-B/16 pretrained on ImageNet-21K |
-| Adapter | Parallel to each block MLP; bottleneck dimension 64; zero-initialized output projection |
+| Backbone | Frozen ViT-B/16 pretrained on ImageNet-21K (reported paper setting) |
+| Adapter | Parallel to each block MLP; bottleneck dimension 64; task 0 has zero-initialized output projection |
 | Task representation | Adapter parameter matrix; truncated SVD dimension 12 |
 | Quantum module | Trainable data-conditioned `Ry` angles and CNOT chain; one circuit layer described |
 | Training | SGD, learning rate 0.05, cosine decay, batch 32, 20 epochs/task |
@@ -48,9 +48,9 @@ default in the supplied text.
 - A task vector is computed from the learned adapter down/up projection
   matrices: concatenate them by feature columns, retain the rank-`r` truncated
   SVD, multiply the reconstruction by an all-ones vector, and normalize.
-- Each new adapter's final projection is zero-initialized, so it starts as a
-  no-op residual and does not perturb the pretrained representation before
-  learning.
+- Task 0's final adapter projection is zero-initialized, so it starts as a
+  no-op residual. Each later task copies task 0's adapter parameters at the
+  task boundary, then trains that copy while freezing all previous adapters.
 - Training keeps the pretrained backbone and previous adapters frozen; it
   trains only the current adapter, a global classifier, and the QGTM rotations.
   The classification head grows with the set of seen class IDs. The TIKD loss
@@ -70,9 +70,11 @@ default in the supplied text.
   seen-class logits.
 - The paper does not fully specify adapter-vector construction, mapping vector
   coordinates when `q` differs from feature dimension, or all initialization
-  details. The zero-output initialization, adaptive-pooling, and angle-scaling
-  choices above are deterministic and are not claimed as author-released
-  implementation details.
+  details. The current default loads `vit_base_patch16_224` pretrained weights
+  through `timm`, rather than the paper's reported ImageNet-21K checkpoint.
+  The zero-output initialization, adapter-copy initialization,
+  adaptive-pooling, and angle-scaling choices above are deterministic and are
+  not claimed as author-released implementation details.
 
 For comparable results, provide the exact frozen ViT-B/16-IN21K checkpoint,
 dataset preprocessing, class order, and random seed. Checkpoint provenance and

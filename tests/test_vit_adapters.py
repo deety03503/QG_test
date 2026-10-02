@@ -62,23 +62,46 @@ def test_tiny_vit_uses_adapters_and_freezes_backbone():
 
 
 def test_adding_task_freezes_previous_adapter():
-    timm = pytest.importorskip("timm")
-    backbone = timm.create_model(
-        "vit_tiny_patch16_224",
-        pretrained=False,
-        num_classes=0,
-        img_size=32,
-    )
-    model = PretrainedViT(backbone, bottleneck_dim=8)
+    model = PretrainedViT(TinyBackbone(), bottleneck_dim=2)
     previous_adapter = model._routed_mlps[0].adapters[0]
+    with torch.no_grad():
+        for parameter in previous_adapter.parameters():
+            parameter.fill_(0.25)
+    initial_adapter_state = {
+        name: parameter.detach().clone()
+        for name, parameter in previous_adapter.named_parameters()
+    }
 
     model.add_task_adapter()
 
     assert model.num_tasks == 2
     assert all(not parameter.requires_grad for parameter in previous_adapter.parameters())
     assert all(
+        torch.equal(parameter, initial_adapter_state[name])
+        for name, parameter in model._routed_mlps[0].adapters[1].named_parameters()
+    )
+    assert all(
         parameter.requires_grad
         for parameter in model._routed_mlps[0].adapters[1].parameters()
+    )
+    with torch.no_grad():
+        for parameter in model._routed_mlps[0].adapters[1].parameters():
+            parameter.fill_(0.75)
+
+    model.add_task_adapter()
+
+    assert model.num_tasks == 3
+    assert all(
+        torch.equal(parameter, initial_adapter_state[name])
+        for name, parameter in model._routed_mlps[0].adapters[2].named_parameters()
+    )
+    assert all(
+        not parameter.requires_grad
+        for parameter in model._routed_mlps[0].adapters[1].parameters()
+    )
+    assert all(
+        parameter.requires_grad
+        for parameter in model._routed_mlps[0].adapters[2].parameters()
     )
 
 
