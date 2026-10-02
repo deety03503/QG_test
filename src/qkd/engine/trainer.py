@@ -108,7 +108,7 @@ class IncrementalTrainer:
         ]
         trainable_parameters.extend(self.classifier.parameters())
         trainable_parameters.extend(self.qgtm.parameters())
-        optimizer = torch.optim.SGD(trainable_parameters, lr=learning_rate)
+        optimizer = torch.optim.SGD(trainable_parameters, lr=learning_rate, momentum=0.9)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
         if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
             scaler = torch.amp.GradScaler("cuda", enabled=self.use_grad_scaler)
@@ -210,7 +210,7 @@ class IncrementalTrainer:
                             current_logits[:, previous_column_indices],
                             relevance,
                         )
-                        loss_sparse = task_gate_sparsity(relevance)
+                        loss_sparse = task_gate_sparsity(task_scores)
                     else:
                         loss_kd = current_logits.new_zeros(())
                         loss_sparse = current_logits.new_zeros(())

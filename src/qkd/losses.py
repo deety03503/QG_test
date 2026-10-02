@@ -40,12 +40,18 @@ def task_interaction_distillation(
     return (per_task_kl * relevance).sum(dim=1).mean()
 
 
-def task_gate_sparsity(relevance: Tensor) -> Tensor:
-    """Compute the paper's L1 penalty on softmax-normalized task weights."""
-    if relevance.ndim != 2:
-        raise ValueError("relevance must have shape (batch, tasks)")
-    if relevance.shape[1] == 0:
-        raise ValueError("at least one task relevance weight is required")
-    if not torch.isfinite(relevance).all():
-        raise ValueError("relevance must contain finite values")
-    return relevance.abs().sum(dim=1).mean()
+def task_gate_sparsity(scores: Tensor) -> Tensor:
+    """Compute L1 sparsity penalty on pre-softmax task relevance scores.
+
+    Applied to raw fidelity scores before softmax normalization so that the
+    penalty can produce non-zero gradients.  When applied to post-softmax
+    weights the L1 norm is constant (all weights are positive and sum to 1),
+    yielding zero gradient.
+    """
+    if scores.ndim != 2:
+        raise ValueError("scores must have shape (batch, tasks)")
+    if scores.shape[1] == 0:
+        raise ValueError("at least one task relevance score is required")
+    if not torch.isfinite(scores).all():
+        raise ValueError("scores must contain finite values")
+    return scores.abs().sum(dim=1).mean()

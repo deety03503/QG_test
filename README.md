@@ -47,10 +47,11 @@ By default, 10% of the CIFAR-100 training examples per class are held out as a
 development set (`--dev-fraction` controls this fraction). Training uses only
 the remaining examples. Each task/epoch displays running total, CE, KD, and
 sparsity losses, training accuracy, and development accuracy over all classes
-seen so far. After each task, task-agnostic development accuracy is measured
-using the same QGTM-weighted adapter fusion as inference. The test set is not
-used during training or model selection; final test accuracy is computed once,
-after all tasks have completed. The run writes checkpoints and a `metrics.json`
+seen so far using the newest adapter. After each task, task-agnostic
+development accuracy is measured using the same QGTM-weighted adapter fusion
+as inference. The test set is not used during training or model selection;
+final test accuracy is computed once, after all tasks have completed. The run
+writes checkpoints and a `metrics.json`
 containing per-epoch development accuracies, task-agnostic development
 accuracies, and final test accuracy. CUDA training uses BF16 autocast when
 supported, otherwise FP16 with gradient scaling, and clips the global gradient
