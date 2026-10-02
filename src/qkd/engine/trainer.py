@@ -112,13 +112,15 @@ class IncrementalTrainer:
             scaler = torch.amp.GradScaler("cuda", enabled=self.use_grad_scaler)
         else:
             scaler = torch.cuda.amp.GradScaler(enabled=self.use_grad_scaler)
-        class_position = {class_id: index for index, class_id in enumerate(all_seen_classes)}
-        seen_column_indices = torch.tensor(all_seen_classes, device=self.device)
+        current_class_position = {
+            class_id: index for index, class_id in enumerate(class_ids)
+        }
+        current_column_indices = torch.tensor(class_ids, device=self.device)
         previous_classes = [
             class_id for task in self.task_class_ids for class_id in task
         ]
         previous_column_indices = torch.tensor(
-            [class_position[class_id] for class_id in previous_classes],
+            previous_classes,
             device=self.device,
         )
         target_lookup = torch.full(
@@ -128,7 +130,7 @@ class IncrementalTrainer:
             device=self.device,
         )
         target_lookup[torch.tensor(class_ids, device=self.device)] = torch.tensor(
-            [class_position[class_id] for class_id in class_ids],
+            [current_class_position[class_id] for class_id in class_ids],
             device=self.device,
         )
         epoch_losses: list[float] = []
@@ -167,13 +169,14 @@ class IncrementalTrainer:
                     enabled=self.use_amp,
                 ):
                     current_features = self.encoder(images)
-                    current_logits = self.classifier(current_features)[:, seen_column_indices]
+                    all_current_logits = self.classifier(current_features)
+                    current_logits = all_current_logits[:, current_column_indices]
                     if not torch.isfinite(current_features).all():
                         raise FloatingPointError(
                             f"non-finite encoder features in task {task_id + 1}, "
                             f"epoch {epoch + 1}, batch {batch_index + 1}"
                         )
-                    if not torch.isfinite(current_logits).all():
+                    if not torch.isfinite(all_current_logits).all():
                         raise FloatingPointError(
                             f"non-finite classifier logits in task {task_id + 1}, "
                             f"epoch {epoch + 1}, batch {batch_index + 1}"
@@ -189,7 +192,7 @@ class IncrementalTrainer:
                         historical_logits = historical_logits[:, :, previous_column_indices]
                         loss_kd = task_interaction_distillation(
                             historical_logits,
-                            current_logits[:, previous_column_indices],
+                            all_current_logits[:, previous_column_indices],
                             relevance,
                         )
                         loss_sparse = task_gate_sparsity(relevance)
@@ -217,6 +220,7 @@ class IncrementalTrainer:
 
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
+                self._mask_previous_classifier_gradients(previous_classes)
                 gradient_norm = torch.nn.utils.clip_grad_norm_(
                     trainable_parameters,
                     max_norm=1.0,
@@ -251,6 +255,15 @@ class IncrementalTrainer:
             self._adapter_task_representation(encoder, task_id).cpu()
         )
         return epoch_losses
+
+    def _mask_previous_classifier_gradients(self, previous_classes: list[int]) -> None:
+        """Keep learned class weights fixed while later tasks are trained."""
+        if self.classifier is None or not previous_classes:
+            return
+        previous_indices = torch.tensor(previous_classes, device=self.device)
+        for parameter in (self.classifier.weight, self.classifier.bias):
+            if parameter.grad is not None:
+                parameter.grad.index_fill_(0, previous_indices, 0)
 
     @torch.no_grad()
     def predict(self, images: Tensor) -> Tensor:
