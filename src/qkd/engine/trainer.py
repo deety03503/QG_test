@@ -244,7 +244,10 @@ class IncrementalTrainer:
             if dev_loader is not None:
                 task_accuracy = self.evaluate_current_adapter(dev_loader, all_seen_classes)
                 task_dev_accuracies.append(task_accuracy)
-                progress.set_postfix(task_accuracy=f"{100 * task_accuracy:.2f}%")
+                tqdm.write(
+                    f"Task {task_id + 1} | Epoch {epoch + 1}/{epochs} | "
+                    f"task_accuracy={100 * task_accuracy:.2f}%"
+                )
                 self.classifier.train()
             scheduler.step()
 
