@@ -37,18 +37,22 @@ Without a checkpoint or `--pretrained`, the backbone is randomly initialized
 and then frozen, which is not paper-comparable. A configured but missing local
 checkpoint is an error; it does not silently fall back to random weights.
 
-Run the configured CIFAR-100 B0-Inc10 training and task-agnostic evaluation with:
+Run the configured CIFAR-100 B0-Inc10 training, development evaluation, and final test evaluation with:
 
 ```powershell
 python main.py --data-root <cifar-100-root> --pretrained --output-dir outputs/cifar100_b0_inc10
 ```
 
-During training, each task/epoch displays running total, CE, KD, and sparsity
-losses, plus accuracy over all seen classes and over only the current task's
-classes. The run also evaluates task-agnostically on all classes learned so
-far after every task. It writes checkpoints and a
-`metrics.json` containing stage accuracies, average incremental accuracy, and
-final accuracy to the output directory. CUDA training uses BF16 autocast when
+By default, 10% of the CIFAR-100 training examples per class are held out as a
+development set (`--dev-fraction` controls this fraction). Training uses only
+the remaining examples. Each task/epoch displays running total, CE, KD, and
+sparsity losses, training accuracy, and development accuracy over all classes
+seen so far. After each task, task-agnostic development accuracy is measured
+using the same QGTM-weighted adapter fusion as inference. The test set is not
+used during training or model selection; final test accuracy is computed once,
+after all tasks have completed. The run writes checkpoints and a `metrics.json`
+containing per-epoch development accuracies, task-agnostic development
+accuracies, and final test accuracy. CUDA training uses BF16 autocast when
 supported, otherwise FP16 with gradient scaling, and clips the global gradient
 norm to 1. Non-finite inputs, activations, logits, or losses stop training with
 the task/epoch/batch location instead of silently propagating NaNs.

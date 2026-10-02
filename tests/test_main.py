@@ -47,6 +47,7 @@ def test_default_model_is_standard_pretrained_vit(monkeypatch):
     args = main.parse_args()
 
     assert args.model_name == "vit_base_patch16_224"
+    assert args.dev_fraction == 0.1
 
 
 def test_create_encoder_accepts_standard_pretrained_vit(monkeypatch):

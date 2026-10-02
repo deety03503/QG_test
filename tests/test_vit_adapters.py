@@ -181,6 +181,27 @@ def test_incremental_trainer_reports_running_loss_and_accuracy(monkeypatch):
     assert all(metrics["accuracy"] == metrics["task_accuracy"] for metrics in recorded_postfixes)
 
 
+def test_incremental_trainer_tracks_dev_accuracy_each_epoch():
+    model = PretrainedViT(TinyBackbone(), bottleneck_dim=2)
+    trainer = IncrementalTrainer(model, device=torch.device("cpu"))
+    inputs = torch.randn(8, 4)
+    labels = torch.tensor([0, 1] * 4)
+    train_loader = DataLoader(TensorDataset(inputs, labels), batch_size=4)
+    dev_loader = DataLoader(TensorDataset(inputs, labels), batch_size=4)
+
+    trainer.fit_task(
+        0,
+        train_loader,
+        [0, 1],
+        epochs=2,
+        dev_loader=dev_loader,
+    )
+
+    assert len(trainer.epoch_dev_accuracies) == 1
+    assert len(trainer.epoch_dev_accuracies[0]) == 2
+    assert all(0.0 <= accuracy <= 1.0 for accuracy in trainer.epoch_dev_accuracies[0])
+
+
 def test_incremental_distillation_excludes_classes_not_seen_by_old_tasks(monkeypatch):
     import qkd.engine.trainer as trainer_module
 

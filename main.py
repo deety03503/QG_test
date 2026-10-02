@@ -17,9 +17,8 @@ from torch.utils.data import DataLoader, Subset
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from qkd.data.splits import make_class_order, make_task_class_splits
+from qkd.data.splits import make_class_order, make_task_class_splits, make_train_dev_split
 from qkd.engine.trainer import IncrementalTrainer
-from qkd.metrics import average_incremental_accuracy, final_accuracy
 from qkd.models.vit import PretrainedViT
 
 DEFAULT_MODEL_NAME = "vit_base_patch16_224"
@@ -57,6 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1993)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--dev-fraction", type=float, default=0.1)
     parser.add_argument("--epochs-per-task", type=int, default=20)
     parser.add_argument("--learning-rate", type=float, default=0.05)
     parser.add_argument("--bottleneck-dim", type=int, default=64)
@@ -165,6 +165,8 @@ def create_encoder(args: argparse.Namespace) -> PretrainedViT:
 def run(args: argparse.Namespace) -> None:
     if args.batch_size <= 0 or args.num_workers < 0:
         raise ValueError("batch-size must be positive and num-workers cannot be negative")
+    if not 0 < args.dev_fraction < 1:
+        raise ValueError("dev-fraction must be between 0 and 1")
     if args.epochs_per_task <= 0 or args.learning_rate <= 0:
         raise ValueError("epochs-per-task and learning-rate must be positive")
     if args.svd_dim <= 0 or args.num_qubits <= 0 or args.circuit_layers <= 0:
@@ -182,6 +184,15 @@ def run(args: argparse.Namespace) -> None:
     data_config = timm.data.resolve_model_data_config(encoder.backbone)
     image_transform = timm.data.create_transform(**data_config, is_training=False)
     train_dataset, test_dataset = load_cifar100(args.data_root, image_transform)
+    train_indices, dev_indices = make_train_dev_split(
+        train_dataset.targets,
+        dev_fraction=args.dev_fraction,
+        seed=args.seed,
+    )
+    print(
+        f"Train/dev split: {len(train_indices):,} train images; "
+        f"{len(dev_indices):,} dev images ({args.dev_fraction:.0%} dev per class)"
+    )
     class_order = make_class_order(num_classes=100, seed=args.seed)
     task_classes = make_task_class_splits(
         class_order,
@@ -205,20 +216,32 @@ def run(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
     losses_by_task: list[list[float]] = []
-    stage_accuracies: list[float] = []
+    task_agnostic_dev_accuracies: list[float] = []
     accumulated_classes: set[int] = set()
 
     for task_id, classes in enumerate(task_classes):
         class_set = set(classes)
         indices = [
-            index
-            for index, label in enumerate(train_dataset.targets)
-            if label in class_set
+            index for index in train_indices if train_dataset.targets[index] in class_set
         ]
         train_loader = DataLoader(
             Subset(train_dataset, indices),
             batch_size=args.batch_size,
             shuffle=True,
+            num_workers=args.num_workers,
+            pin_memory=device.type == "cuda",
+            persistent_workers=args.num_workers > 0,
+        )
+        seen_classes = accumulated_classes | class_set
+        dev_task_indices = [
+            index
+            for index in dev_indices
+            if train_dataset.targets[index] in seen_classes
+        ]
+        dev_loader = DataLoader(
+            Subset(train_dataset, dev_task_indices),
+            batch_size=args.batch_size,
+            shuffle=False,
             num_workers=args.num_workers,
             pin_memory=device.type == "cuda",
             persistent_workers=args.num_workers > 0,
@@ -229,24 +252,12 @@ def run(args: argparse.Namespace) -> None:
             seen_classes=classes,
             epochs=args.epochs_per_task,
             learning_rate=args.learning_rate,
+            dev_loader=dev_loader,
         )
         losses_by_task.append(epoch_losses)
+        task_agnostic_dev_accuracy = trainer.evaluate(dev_loader)
+        task_agnostic_dev_accuracies.append(task_agnostic_dev_accuracy)
         accumulated_classes.update(classes)
-        test_indices = [
-            index
-            for index, label in enumerate(test_dataset.targets)
-            if label in accumulated_classes
-        ]
-        test_loader = DataLoader(
-            Subset(test_dataset, test_indices),
-            batch_size=args.batch_size,
-            shuffle=False,
-            num_workers=args.num_workers,
-            pin_memory=device.type == "cuda",
-            persistent_workers=args.num_workers > 0,
-        )
-        stage_accuracy = trainer.evaluate(test_loader)
-        stage_accuracies.append(stage_accuracy)
         checkpoint_file = output_dir / f"qkd_task_{task_id + 1:02d}.pt"
         torch.save(
             {
@@ -257,7 +268,8 @@ def run(args: argparse.Namespace) -> None:
                 "task_class_ids": trainer.task_class_ids,
                 "task_representations": trainer.task_representations,
                 "epoch_losses": losses_by_task,
-                "stage_accuracies": stage_accuracies,
+                "epoch_dev_accuracies": trainer.epoch_dev_accuracies,
+                "task_agnostic_dev_accuracies": task_agnostic_dev_accuracies,
                 "config": vars(args),
             },
             checkpoint_file,
@@ -265,20 +277,30 @@ def run(args: argparse.Namespace) -> None:
         print(
             f"Task {task_id + 1}/{len(task_classes)} complete; "
             f"final loss={epoch_losses[-1]:.4f}; "
-            f"task-agnostic accuracy={stage_accuracy:.4f}; saved {checkpoint_file}"
+            f"task-agnostic dev accuracy={task_agnostic_dev_accuracy:.4f}; "
+            f"saved {checkpoint_file}"
         )
         del train_loader
-        del test_loader
+        del dev_loader
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=device.type == "cuda",
+        persistent_workers=args.num_workers > 0,
+    )
+    final_test_accuracy = trainer.evaluate(test_loader)
 
     metrics = {
-        "stage_accuracies": stage_accuracies,
-        "average_incremental_accuracy": average_incremental_accuracy(stage_accuracies),
-        "final_accuracy": final_accuracy(stage_accuracies),
+        "epoch_dev_accuracies": trainer.epoch_dev_accuracies,
+        "task_agnostic_dev_accuracies": task_agnostic_dev_accuracies,
+        "final_test_accuracy": final_test_accuracy,
     }
     metrics_file = output_dir / "metrics.json"
     metrics_file.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-    print(f"Average incremental accuracy: {metrics['average_incremental_accuracy']:.4f}")
-    print(f"Final accuracy: {metrics['final_accuracy']:.4f}")
+    print(f"Final test accuracy: {final_test_accuracy:.4f}")
     print(f"Saved evaluation metrics to {metrics_file}")
 
 
