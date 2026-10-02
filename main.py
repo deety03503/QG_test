@@ -19,6 +19,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from qkd.data.splits import make_class_order, make_task_class_splits, make_train_dev_split
 from qkd.engine.trainer import IncrementalTrainer
+from qkd.metrics import final_accuracy
 from qkd.models.vit import PretrainedViT
 
 DEFAULT_MODEL_NAME = "vit_base_patch16_224"
@@ -257,6 +258,7 @@ def run(args: argparse.Namespace) -> None:
         losses_by_task.append(epoch_losses)
         task_agnostic_dev_accuracy = trainer.evaluate(dev_loader)
         task_agnostic_dev_accuracies.append(task_agnostic_dev_accuracy)
+        current_final_dev_accuracy = final_accuracy(task_agnostic_dev_accuracies)
         accumulated_classes.update(classes)
         checkpoint_file = output_dir / f"qkd_task_{task_id + 1:02d}.pt"
         torch.save(
@@ -270,6 +272,7 @@ def run(args: argparse.Namespace) -> None:
                 "epoch_losses": losses_by_task,
                 "epoch_dev_accuracies": trainer.epoch_dev_accuracies,
                 "task_agnostic_dev_accuracies": task_agnostic_dev_accuracies,
+                "final_incremental_dev_accuracy": current_final_dev_accuracy,
                 "config": vars(args),
             },
             checkpoint_file,
@@ -278,6 +281,7 @@ def run(args: argparse.Namespace) -> None:
             f"Task {task_id + 1}/{len(task_classes)} complete; "
             f"final loss={epoch_losses[-1]:.4f}; "
             f"task-agnostic dev accuracy={task_agnostic_dev_accuracy:.4f}; "
+            f"final incremental dev accuracy={current_final_dev_accuracy:.4f}; "
             f"saved {checkpoint_file}"
         )
         del train_loader
@@ -292,14 +296,17 @@ def run(args: argparse.Namespace) -> None:
         persistent_workers=args.num_workers > 0,
     )
     final_test_accuracy = trainer.evaluate(test_loader)
+    final_incremental_dev_accuracy = final_accuracy(task_agnostic_dev_accuracies)
 
     metrics = {
         "epoch_dev_accuracies": trainer.epoch_dev_accuracies,
         "task_agnostic_dev_accuracies": task_agnostic_dev_accuracies,
+        "final_incremental_dev_accuracy": final_incremental_dev_accuracy,
         "final_test_accuracy": final_test_accuracy,
     }
     metrics_file = output_dir / "metrics.json"
     metrics_file.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    print(f"Final incremental dev accuracy: {final_incremental_dev_accuracy:.4f}")
     print(f"Final test accuracy: {final_test_accuracy:.4f}")
     print(f"Saved evaluation metrics to {metrics_file}")
 
