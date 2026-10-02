@@ -140,6 +140,10 @@ def test_incremental_trainer_reports_running_loss_and_accuracy(monkeypatch):
     trainer.fit_task(0, loader, [0, 1], epochs=1)
 
     assert len(recorded_postfixes) == len(loader)
-    assert all(set(metrics) == {"loss", "accuracy"} for metrics in recorded_postfixes)
+    assert all(
+        set(metrics) == {"loss", "ce", "kd", "sparse", "accuracy", "task_accuracy"}
+        for metrics in recorded_postfixes
+    )
     assert all(metrics["loss"] for metrics in recorded_postfixes)
     assert all(metrics["accuracy"].endswith("%") for metrics in recorded_postfixes)
+    assert all(metrics["accuracy"] == metrics["task_accuracy"] for metrics in recorded_postfixes)

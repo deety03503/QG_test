@@ -21,7 +21,7 @@ exemplar count, and total memory budget.
 | Backbone | Frozen ViT-B/16 pretrained on ImageNet-21K |
 | Adapter | Parallel to each block MLP; bottleneck dimension 64 |
 | Task representation | Adapter parameter matrix; truncated SVD dimension 12 |
-| Quantum module | Trainable `Ry` rotations and CNOT chain; one circuit layer described |
+| Quantum module | Trainable data-conditioned `Ry` angles and CNOT chain; one circuit layer described |
 | Training | SGD, learning rate 0.05, cosine decay, batch 32, 20 epochs/task |
 | Objective | CE + weighted task KL (`lambda_kd=1.0`) + sparsity term (`lambda_s=0.05`) |
 | Relevance | Softmax temperature 1.0 |
@@ -38,11 +38,13 @@ default in the supplied text.
 
 ## Paper-faithful implementation choices
 
-- The QGTM uses a differentiable PyTorch state-vector simulator. Data angles
-  are the first `q` coordinates of normalized vectors; each layer applies
-  per-qubit data `Ry` rotations, trainable `Ry` rotations, and the paper's
+- The QGTM uses a differentiable PyTorch state-vector simulator. It adaptively
+  average-pools each full input vector to `q` coordinates, normalizes the
+  pooled vector, and maps it to angles in `[-pi, pi]`. Trainable per-qubit
+  scales modulate those data-conditioned `Ry` angles before the paper's
   adjacent-qubit CNOT chain. Fidelity is the squared state-vector inner
-  product.
+  product. This avoids discarding all but the first `q` coordinates and avoids
+  a shared final unitary cancelling from the fidelity.
 - A task vector is computed from the learned adapter down/up projection
   matrices: concatenate them by feature columns, retain the rank-`r` truncated
   SVD, multiply the reconstruction by an all-ones vector, and normalize.
@@ -57,10 +59,15 @@ default in the supplied text.
 - The paper's Eq. 11 applies the L1 norm to softmax-normalized relevance
   weights. The implementation preserves this formula exactly; since the
   weights sum to one, the term is constant and supplies no sparsity gradient.
+- The training progress reports both accuracy among all seen classes and
+  accuracy restricted to the current task classes, along with CE and the
+  lambda-weighted KD and sparsity loss contributions. These displayed terms
+  sum to the total objective. The CE targets remain indices in the global
+  seen-class logits.
 - The paper does not fully specify adapter-vector construction, mapping vector
   coordinates when `q` differs from feature dimension, or all initialization
-  details. The choices above make these steps deterministic and are not
-  claimed as author-released implementation details.
+  details. The adaptive-pooling and angle-scaling choices above are
+  deterministic and are not claimed as author-released implementation details.
 
 For comparable results, provide the exact frozen ViT-B/16-IN21K checkpoint,
 dataset preprocessing, class order, and random seed. Checkpoint provenance and

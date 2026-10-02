@@ -42,18 +42,21 @@ Run the configured CIFAR-100 B0-Inc10 training and task-agnostic evaluation with
 python main.py --data-root <cifar-100-root> --output-dir outputs/cifar100_b0_inc10
 ```
 
-During training, each task/epoch displays a batch progress bar with running
-loss and training accuracy. The run also evaluates task-agnostically on all
-classes learned so far after every task. It writes checkpoints and a
+During training, each task/epoch displays running total, CE, KD, and sparsity
+losses, plus accuracy over all seen classes and over only the current task's
+classes. The run also evaluates task-agnostically on all classes learned so
+far after every task. It writes checkpoints and a
 `metrics.json` containing stage accuracies, average incremental accuracy, and
 final accuracy to the output directory.
 
-The simulator applies data and trainable `Ry` rotations followed by a
-nearest-neighbour CNOT chain in each circuit layer. Task representations are
-formed by truncated SVD of the down/up adapter projection matrices, then
-normalized. The paper defines its sparsity term as the L1 norm of softmax
-relevance weights; this expression is retained literally, although it equals
-one and therefore does not itself encourage sparsity.
+The simulator adaptively pools each full feature vector to the qubit count,
+normalizes and maps the pooled values to `[-pi, pi]` rotation angles, then
+applies trainable data-conditioned `Ry` angle scales and a nearest-neighbour
+CNOT chain. Task representations are formed by truncated SVD of the down/up
+adapter projection matrices, then normalized. The paper defines its sparsity
+term as the L1 norm of softmax relevance weights; this expression is retained
+literally, although it equals one and therefore does not itself encourage
+sparsity.
 
 Set `QKD_VIT_B16_IN21K_WEIGHTS` or pass `--checkpoint-path <file>` to load a
 local pretrained backbone, or use `--pretrained` to load the default weights

@@ -118,6 +118,15 @@ class IncrementalTrainer:
             [class_position[class_id] for class_id in class_ids],
             device=self.device,
         )
+        task_target_lookup = torch.full_like(target_lookup, -1)
+        task_target_lookup[torch.tensor(class_ids, device=self.device)] = torch.arange(
+            len(class_ids),
+            device=self.device,
+        )
+        task_column_indices = torch.tensor(
+            [class_position[class_id] for class_id in class_ids],
+            device=self.device,
+        )
 
         epoch_losses: list[float] = []
         self.encoder.eval()
@@ -125,8 +134,12 @@ class IncrementalTrainer:
         self.classifier.train()
         for epoch in range(epochs):
             total_loss = 0.0
+            total_ce = 0.0
+            total_kd = 0.0
+            total_sparse = 0.0
             sample_count = 0
             correct_count = 0
+            task_correct_count = 0
             progress = tqdm(
                 train_loader,
                 desc=f"Task {task_id + 1} | Epoch {epoch + 1}/{epochs}",
@@ -142,6 +155,7 @@ class IncrementalTrainer:
                 targets = target_lookup[labels]
                 if (targets < 0).any():
                     raise ValueError("training batch contains labels outside the current task")
+                task_targets = task_target_lookup[labels]
 
                 optimizer.zero_grad(set_to_none=True)
                 with torch.autocast(
@@ -173,11 +187,22 @@ class IncrementalTrainer:
 
                 batch_size = labels.size(0)
                 total_loss += loss.detach().item() * batch_size
+                total_ce += loss_ce.detach().item() * batch_size
+                total_kd += loss_kd.detach().item() * batch_size
+                total_sparse += loss_sparse.detach().item() * batch_size
                 correct_count += (current_logits.detach().argmax(dim=1) == targets).sum().item()
+                task_logits = current_logits.detach()[:, task_column_indices]
+                task_correct_count += (
+                    task_logits.argmax(dim=1) == task_targets
+                ).sum().item()
                 sample_count += batch_size
                 progress.set_postfix(
                     loss=f"{total_loss / sample_count:.4f}",
+                    ce=f"{total_ce / sample_count:.4f}",
+                    kd=f"{self.lambda_kd * total_kd / sample_count:.4f}",
+                    sparse=f"{self.lambda_sparse * total_sparse / sample_count:.4f}",
                     accuracy=f"{100 * correct_count / sample_count:.2f}%",
+                    task_accuracy=f"{100 * task_correct_count / sample_count:.2f}%",
                 )
 
                 scaler.scale(loss).backward()

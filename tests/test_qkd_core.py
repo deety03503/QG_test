@@ -35,6 +35,20 @@ def test_quantum_feature_map_returns_fidelities_and_backpropagates():
     assert torch.isfinite(circuit.rotation_angles.grad).all()
 
 
+def test_quantum_feature_map_uses_full_features_and_learns_from_fidelity():
+    torch.manual_seed(7)
+    circuit = QuantumFeatureMap(input_dim=768, num_qubits=9, num_layers=1)
+    features = torch.randn(8, 768)
+    task_states = torch.randn(3, 768)
+
+    scores = circuit(features, task_states)
+    (scores[:, 0].sum()).backward()
+
+    assert scores.std() > 0.01
+    assert circuit.rotation_angles.grad is not None
+    assert circuit.rotation_angles.grad.abs().max() > 1e-6
+
+
 def test_task_gate_sparsity_matches_the_paper_softmax_l1_formula():
     relevance = torch.tensor([[0.2, 0.8], [0.7, 0.3]])
 

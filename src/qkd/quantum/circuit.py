@@ -1,5 +1,7 @@
 """Differentiable state-vector quantum feature map used by QGTM."""
 
+from math import pi
+
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
@@ -8,10 +10,11 @@ from torch.nn import functional as F
 class QuantumFeatureMap(nn.Module):
     """Encode sample/task vectors and return their quantum-state fidelities.
 
-    The circuit follows Eqs. 5-10 in the paper: data and trainable ``Ry``
-    rotations are applied on each qubit, followed by a nearest-neighbour CNOT
-    chain. A real state vector is sufficient because these gates have real
-    matrix entries.
+    Input features are pooled to one angle per qubit and normalized to the
+    ``[-pi, pi]`` range. Trainable data-conditioned ``Ry`` angle scales and a
+    nearest-neighbour CNOT chain form the state. Scaling the encoded angles
+    keeps the trainable parameters from cancelling as a shared final unitary
+    when state fidelities are computed.
     """
 
     def __init__(self, input_dim: int, num_qubits: int, num_layers: int = 1):
@@ -43,22 +46,19 @@ class QuantumFeatureMap(nn.Module):
 
     def _encode(self, vectors: Tensor) -> Tensor:
         normalized = F.normalize(vectors, p=2, dim=1)
-        if self.num_qubits > self.input_dim:
-            angles = F.pad(normalized, (0, self.num_qubits - self.input_dim))
-        else:
-            angles = normalized[:, : self.num_qubits]
+        pooled = F.adaptive_avg_pool1d(
+            normalized.unsqueeze(1),
+            output_size=self.num_qubits,
+        ).squeeze(1)
+        angles = F.normalize(pooled, p=2, dim=1) * pi
 
         batch_size = angles.shape[0]
         state = angles.new_zeros((batch_size, 1 << self.num_qubits))
         state[:, 0] = 1.0
         for layer in range(self.num_layers):
             for qubit in range(self.num_qubits):
-                state = self._apply_ry(state, angles[:, qubit], qubit)
-                state = self._apply_ry(
-                    state,
-                    self.rotation_angles[layer, qubit].expand(batch_size),
-                    qubit,
-                )
+                scaled_angle = angles[:, qubit] * (1 + self.rotation_angles[layer, qubit])
+                state = self._apply_ry(state, scaled_angle, qubit)
             for control in range(self.num_qubits - 1):
                 state = self._apply_cnot(state, control, control + 1)
         return state
