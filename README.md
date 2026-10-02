@@ -45,23 +45,23 @@ python main.py --data-root <cifar-100-root> --pretrained --output-dir outputs/ci
 
 By default, 10% of the CIFAR-100 training examples per class are held out as a
 development set (`--dev-fraction` controls this fraction). Training uses only
-the remaining examples. During each epoch, the progress bar displays only
-training accuracy, accumulated from the start of that epoch through the
-current batch. At the end of each epoch, it displays `task_accuracy`, the
-accuracy over the full development set across all classes seen so far, evaluated
-using the newest adapter. After each task, task-agnostic
-development accuracy is measured using the same QGTM-weighted adapter fusion
-as inference. The test set is not used during training or model selection;
-final test accuracy is computed once, after all tasks have completed. The run
-writes checkpoints and a `metrics.json`
-containing per-epoch development accuracies, task-agnostic development
-accuracies, final incremental development accuracy (the last task-agnostic
-development score), and final test accuracy. The final test accuracy is
-computed once after all tasks complete and is kept separate from development
-metrics. CUDA training uses BF16 autocast when supported, otherwise FP16 with
-gradient scaling, and clips the global gradient norm to 1. Non-finite inputs,
-activations, logits, or losses stop training with the task/epoch/batch location
-instead of silently propagating NaNs.
+the remaining examples. During each epoch, the progress bar displays the
+running average total training loss and accuracy, accumulated from the start of
+that epoch through the current batch. Per-epoch development accuracies are
+recorded but not printed. After each task, task-agnostic development accuracy
+is measured using the same QGTM-weighted adapter fusion as inference; accuracy
+is also reported separately for each learned task using its own development
+examples. The test set is not used during training or model selection; final
+test accuracy is computed once, after all tasks have completed. The run writes
+checkpoints and a `metrics.json` containing per-epoch development accuracies,
+task-agnostic development accuracies, per-task development accuracies, final
+incremental development accuracy (the last task-agnostic development score),
+and final test accuracy. The final test accuracy is computed once after all
+tasks complete and is kept separate from development metrics. CUDA training
+uses BF16 autocast when supported, otherwise FP16 with gradient scaling, and
+clips the global gradient norm to 1. Non-finite inputs, activations, logits, or
+losses stop training with the task/epoch/batch location instead of silently
+propagating NaNs.
 
 The simulator adaptively pools each full feature vector to the qubit count,
 normalizes and maps the pooled values to `[-pi, pi]` rotation angles, then
