@@ -71,7 +71,7 @@ class IncrementalTrainer:
         learning_rate: float = 0.05,
         dev_loader: DataLoader | None = None,
     ) -> list[float]:
-        """Train the next adapter with CE, QKD, and the paper's sparsity term."""
+        """Train the next adapter with CE, QKD, and entropy-based gate sparsity."""
         if task_id != len(self.task_class_ids):
             raise ValueError("tasks must be trained sequentially starting at task 0")
         if epochs <= 0 or learning_rate <= 0:
@@ -195,7 +195,7 @@ class IncrementalTrainer:
                             current_logits[:, previous_column_indices],
                             relevance,
                         )
-                        loss_sparse = task_gate_sparsity(task_scores)
+                        loss_sparse = task_gate_sparsity(relevance)
                     else:
                         loss_kd = current_logits.new_zeros(())
                         loss_sparse = current_logits.new_zeros(())

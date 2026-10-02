@@ -40,13 +40,19 @@ def task_interaction_distillation(
     return (per_task_kl * relevance).sum(dim=1).mean()
 
 
-def task_gate_sparsity(scores: Tensor) -> Tensor:
-    """Compute L1 sparsity penalty on task relevance scores.
-    """
-    if scores.ndim != 2:
-        raise ValueError("scores must have shape (batch, tasks)")
-    if scores.shape[1] == 0:
+def task_gate_sparsity(relevance: Tensor) -> Tensor:
+    """Compute mean entropy of the normalized task relevance distribution."""
+    if relevance.ndim != 2:
+        raise ValueError("relevance must have shape (batch, tasks)")
+    if relevance.shape[1] == 0:
         raise ValueError("at least one task relevance score is required")
-    if not torch.isfinite(scores).all():
-        raise ValueError("scores must contain finite values")
-    return scores.abs().sum(dim=1).mean()
+    if not torch.isfinite(relevance).all():
+        raise ValueError("relevance must contain finite values")
+    if (relevance < 0).any():
+        raise ValueError("relevance must contain non-negative probabilities")
+
+    if relevance.dtype in (torch.float16, torch.bfloat16):
+        relevance = relevance.float()
+    log_relevance = relevance.clamp_min(torch.finfo(relevance.dtype).tiny).log()
+    entropy = -(relevance * log_relevance).sum(dim=1)
+    return entropy.mean()
