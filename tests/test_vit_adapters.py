@@ -4,6 +4,7 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from qkd.engine.trainer import IncrementalTrainer
+from qkd.models.adapters import ParallelAdapter
 from qkd.models.vit import PretrainedViT
 
 
@@ -26,6 +27,14 @@ class TinyBackbone(nn.Module):
 
     def forward_head(self, features, pre_logits=False):
         return features
+
+
+def test_parallel_adapter_starts_as_zero_residual():
+    adapter = ParallelAdapter(hidden_dim=4, bottleneck_dim=2)
+
+    output = adapter(torch.randn(3, 4))
+
+    torch.testing.assert_close(output, torch.zeros_like(output))
 
 
 def test_tiny_vit_uses_adapters_and_freezes_backbone():
@@ -147,3 +156,42 @@ def test_incremental_trainer_reports_running_loss_and_accuracy(monkeypatch):
     assert all(metrics["loss"] for metrics in recorded_postfixes)
     assert all(metrics["accuracy"].endswith("%") for metrics in recorded_postfixes)
     assert all(metrics["accuracy"] == metrics["task_accuracy"] for metrics in recorded_postfixes)
+
+
+def test_incremental_distillation_excludes_classes_not_seen_by_old_tasks(monkeypatch):
+    import qkd.engine.trainer as trainer_module
+
+    observed_shapes = []
+    original_distillation = trainer_module.task_interaction_distillation
+
+    def record_distillation(historical_logits, current_logits, relevance):
+        observed_shapes.append((historical_logits.shape, current_logits.shape))
+        return original_distillation(historical_logits, current_logits, relevance)
+
+    monkeypatch.setattr(
+        trainer_module,
+        "task_interaction_distillation",
+        record_distillation,
+    )
+    model = PretrainedViT(TinyBackbone(), bottleneck_dim=2)
+    trainer = IncrementalTrainer(model, device=torch.device("cpu"))
+    inputs = torch.randn(4, 4)
+
+    trainer.fit_task(
+        0,
+        DataLoader(TensorDataset(inputs, torch.tensor([0, 1, 0, 1])), batch_size=4),
+        [0, 1],
+        epochs=1,
+    )
+    trainer.fit_task(
+        1,
+        DataLoader(TensorDataset(inputs, torch.tensor([2, 3, 2, 3])), batch_size=4),
+        [2, 3],
+        epochs=1,
+    )
+
+    assert observed_shapes
+    assert all(
+        historical_shape[1:] == (1, 2) and current_shape[1] == 2
+        for historical_shape, current_shape in observed_shapes
+    )

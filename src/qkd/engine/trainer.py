@@ -108,6 +108,13 @@ class IncrementalTrainer:
             scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
         class_position = {class_id: index for index, class_id in enumerate(all_seen_classes)}
         seen_column_indices = torch.tensor(all_seen_classes, device=self.device)
+        previous_classes = [
+            class_id for task in self.task_class_ids for class_id in task
+        ]
+        previous_column_indices = torch.tensor(
+            [class_position[class_id] for class_id in previous_classes],
+            device=self.device,
+        )
         target_lookup = torch.full(
             (max(all_seen_classes) + 1,),
             -1,
@@ -173,10 +180,10 @@ class IncrementalTrainer:
                         task_scores = self.qgtm(query_features, task_states)
                         relevance = normalize_task_scores(task_scores, self.temperature)
                         historical_logits = self._historical_logits(images, len(self.task_representations))
-                        historical_logits = historical_logits[:, :, seen_column_indices]
+                        historical_logits = historical_logits[:, :, previous_column_indices]
                         loss_kd = task_interaction_distillation(
                             historical_logits,
-                            current_logits,
+                            current_logits[:, previous_column_indices],
                             relevance,
                         )
                         loss_sparse = task_gate_sparsity(relevance)

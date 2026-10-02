@@ -19,7 +19,7 @@ exemplar count, and total memory budget.
 | Component | Setting |
 | --- | --- |
 | Backbone | Frozen ViT-B/16 pretrained on ImageNet-21K |
-| Adapter | Parallel to each block MLP; bottleneck dimension 64 |
+| Adapter | Parallel to each block MLP; bottleneck dimension 64; zero-initialized output projection |
 | Task representation | Adapter parameter matrix; truncated SVD dimension 12 |
 | Quantum module | Trainable data-conditioned `Ry` angles and CNOT chain; one circuit layer described |
 | Training | SGD, learning rate 0.05, cosine decay, batch 32, 20 epochs/task |
@@ -48,11 +48,15 @@ default in the supplied text.
 - A task vector is computed from the learned adapter down/up projection
   matrices: concatenate them by feature columns, retain the rank-`r` truncated
   SVD, multiply the reconstruction by an all-ones vector, and normalize.
+- Each new adapter's final projection is zero-initialized, so it starts as a
+  no-op residual and does not perturb the pretrained representation before
+  learning.
 - Training keeps the pretrained backbone and previous adapters frozen; it
   trains only the current adapter, a global classifier, and the QGTM rotations.
   The classification head grows with the set of seen class IDs. The TIKD loss
-  follows Eq. 13 exactly: relevance-weighted `KL(old adapter || current
-  adapter)` over the seen-class logits.
+  uses relevance-weighted `KL(old adapter || current adapter)` over the
+  previous tasks' class logits only; newly introduced classes are excluded
+  because historical adapters have no trained outputs for them.
 - Task-agnostic inference computes QGTM relevances against all learned task
   vectors, uses the resulting softmax weights to fuse adapter features, and
   applies the global classifier over seen classes.
@@ -66,8 +70,9 @@ default in the supplied text.
   seen-class logits.
 - The paper does not fully specify adapter-vector construction, mapping vector
   coordinates when `q` differs from feature dimension, or all initialization
-  details. The adaptive-pooling and angle-scaling choices above are
-  deterministic and are not claimed as author-released implementation details.
+  details. The zero-output initialization, adaptive-pooling, and angle-scaling
+  choices above are deterministic and are not claimed as author-released
+  implementation details.
 
 For comparable results, provide the exact frozen ViT-B/16-IN21K checkpoint,
 dataset preprocessing, class order, and random seed. Checkpoint provenance and

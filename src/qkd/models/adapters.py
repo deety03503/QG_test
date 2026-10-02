@@ -13,6 +13,8 @@ class ParallelAdapter(nn.Module):
         self.down = nn.Linear(hidden_dim, bottleneck_dim)
         self.activation = nn.ReLU()
         self.up = nn.Linear(bottleneck_dim, hidden_dim)
+        nn.init.zeros_(self.up.weight)
+        nn.init.zeros_(self.up.bias)
 
     def forward(self, mlp_input: Tensor) -> Tensor:
         return self.up(self.activation(self.down(mlp_input)))
