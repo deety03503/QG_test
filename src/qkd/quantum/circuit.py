@@ -11,10 +11,8 @@ class QuantumFeatureMap(nn.Module):
     """Encode sample/task vectors and return their quantum-state fidelities.
 
     Input features are pooled to one angle per qubit and normalized to the
-    ``[-pi, pi]`` range. Trainable data-conditioned ``Ry`` angle scales and a
-    nearest-neighbour CNOT chain form the state. Scaling the encoded angles
-    keeps the trainable parameters from cancelling as a shared final unitary
-    when state fidelities are computed.
+    ``[-pi, pi]`` range. Trainable ``Ry`` angle offsets and a
+    nearest-neighbour CNOT chain form the state.
     """
 
     def __init__(self, input_dim: int, num_qubits: int, num_layers: int = 1):
@@ -41,7 +39,17 @@ class QuantumFeatureMap(nn.Module):
 
         dtype = self.rotation_angles.dtype
         sample_state = self._encode(sample_features.to(dtype=dtype))
-        task_state = self._encode(task_states.to(device=sample_features.device, dtype=dtype))
+        
+        # Eq 10: |\phi_i> = \tilde{s}_i
+        task_state = task_states.to(device=sample_features.device, dtype=dtype)
+        state_dim = 1 << self.num_qubits
+        if task_state.shape[1] > state_dim:
+            task_state = task_state[:, :state_dim]
+        elif task_state.shape[1] < state_dim:
+            padding = task_state.new_zeros((task_state.shape[0], state_dim - task_state.shape[1]))
+            task_state = torch.cat([task_state, padding], dim=1)
+        task_state = F.normalize(task_state, p=2, dim=1)
+        
         return (sample_state @ task_state.transpose(0, 1)).square().clamp(0.0, 1.0)
 
     def _encode(self, vectors: Tensor) -> Tensor:
@@ -57,8 +65,8 @@ class QuantumFeatureMap(nn.Module):
         state[:, 0] = 1.0
         for layer in range(self.num_layers):
             for qubit in range(self.num_qubits):
-                scaled_angle = angles[:, qubit] * (1 + self.rotation_angles[layer, qubit])
-                state = self._apply_ry(state, scaled_angle, qubit)
+                angle = angles[:, qubit] + self.rotation_angles[layer, qubit]
+                state = self._apply_ry(state, angle, qubit)
             for control in range(self.num_qubits - 1):
                 state = self._apply_cnot(state, control, control + 1)
         return state

@@ -210,7 +210,7 @@ class IncrementalTrainer:
                             current_logits[:, previous_column_indices],
                             relevance,
                         )
-                        loss_sparse = task_gate_sparsity(task_scores)
+                        loss_sparse = task_gate_sparsity(relevance)
                     else:
                         loss_kd = current_logits.new_zeros(())
                         loss_sparse = current_logits.new_zeros(())

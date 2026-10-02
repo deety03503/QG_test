@@ -41,12 +41,7 @@ def task_interaction_distillation(
 
 
 def task_gate_sparsity(scores: Tensor) -> Tensor:
-    """Compute L1 sparsity penalty on pre-softmax task relevance scores.
-
-    Applied to raw fidelity scores before softmax normalization so that the
-    penalty can produce non-zero gradients.  When applied to post-softmax
-    weights the L1 norm is constant (all weights are positive and sum to 1),
-    yielding zero gradient.
+    """Compute L1 sparsity penalty on task relevance scores.
     """
     if scores.ndim != 2:
         raise ValueError("scores must have shape (batch, tasks)")
