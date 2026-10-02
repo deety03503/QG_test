@@ -7,6 +7,7 @@ import json
 import os
 import random
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,8 @@ from qkd.data.splits import make_class_order, make_task_class_splits
 from qkd.engine.trainer import IncrementalTrainer
 from qkd.metrics import average_incremental_accuracy, final_accuracy
 from qkd.models.vit import PretrainedViT
+
+DEFAULT_MODEL_NAME = "vit_base_patch16_224.augreg_in21k"
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,7 +46,11 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         default=os.environ.get("QKD_OUTPUT_ROOT", "/kaggle/working/qkd_outputs"),
     )
-    parser.add_argument("--model-name", default="vit_base_patch16_224")
+    parser.add_argument(
+        "--model-name",
+        default=DEFAULT_MODEL_NAME,
+        help="timm model/weight tag; the default is pretrained on ImageNet-21K.",
+    )
     parser.add_argument("--seed", type=int, default=1993)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=2)
@@ -69,19 +76,20 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def load_cifar100(data_root: str):
+def load_cifar100(data_root: str, image_transform: Callable | None = None):
     from torchvision import datasets, transforms
 
-    image_transform = transforms.Compose(
-        [
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=(0.485, 0.456, 0.406),
-                std=(0.229, 0.224, 0.225),
-            ),
-        ]
-    )
+    if image_transform is None:
+        image_transform = transforms.Compose(
+            [
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=(0.5, 0.5, 0.5),
+                    std=(0.5, 0.5, 0.5),
+                ),
+            ]
+        )
     candidates: list[Path] = [Path(data_root).expanduser()]
     kaggle_input = Path("/kaggle/input")
     if kaggle_input.is_dir():
@@ -142,7 +150,15 @@ def create_encoder(args: argparse.Namespace) -> PretrainedViT:
     import timm
 
     if args.pretrained:
-        print(f"Loading {args.model_name} pretrained weights from timm.")
+        if "in21k" not in args.model_name.lower():
+            raise ValueError(
+                "--pretrained requires a timm model name/tag trained on "
+                "ImageNet-21K (containing 'in21k')"
+            )
+        print(
+            f"Loading ImageNet-21K pretrained weights "
+            f"({args.model_name}) from timm."
+        )
         backbone = timm.create_model(args.model_name, pretrained=True, num_classes=0)
     else:
         print("No pretrained weights requested; initializing the backbone randomly.")
@@ -165,7 +181,12 @@ def run(args: argparse.Namespace) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     gpu_count = torch.cuda.device_count()
     print(f"PyTorch: {torch.__version__}; device: {device}; visible GPUs: {gpu_count}")
-    train_dataset, test_dataset = load_cifar100(args.data_root)
+    encoder = create_encoder(args).to(device).eval()
+    import timm.data
+
+    data_config = timm.data.resolve_model_data_config(encoder.backbone)
+    image_transform = timm.data.create_transform(**data_config, is_training=False)
+    train_dataset, test_dataset = load_cifar100(args.data_root, image_transform)
     class_order = make_class_order(num_classes=100, seed=args.seed)
     task_classes = make_task_class_splits(
         class_order,
@@ -174,7 +195,6 @@ def run(args: argparse.Namespace) -> None:
     )
     print(f"Task class counts: {[len(classes) for classes in task_classes]}")
 
-    encoder = create_encoder(args).to(device).eval()
     model = torch.nn.DataParallel(encoder) if gpu_count >= 2 else encoder
     trainer = IncrementalTrainer(
         model,

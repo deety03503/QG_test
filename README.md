@@ -29,17 +29,19 @@ python -m pytest
 
 For paper-faithful runs, set `QKD_VIT_B16_IN21K_WEIGHTS` to the exact local
 ViT-B/16-IN21K checkpoint. `main.py` validates checkpoint/model key
-compatibility. Alternatively, pass `--pretrained` to let `timm` download and
-load the model's default pretrained weights; this requires network access on
-the first run and may not be the exact checkpoint used by the paper. Without
-either option, the backbone is randomly initialized and then frozen, which is
-not paper-comparable. A configured but missing local checkpoint is an error;
-it does not silently fall back to random weights.
+compatibility. To download pretrained weights through `timm`, pass
+`--pretrained`; the default model is explicitly
+`vit_base_patch16_224.augreg_in21k` (ImageNet-21K, not the ImageNet-1K
+fine-tuned variant). The first run requires network access. Preprocessing is
+resolved from that model's timm config, including its ImageNet-21K mean/std.
+Without a checkpoint or `--pretrained`, the backbone is randomly initialized
+and then frozen, which is not paper-comparable. A configured but missing local
+checkpoint is an error; it does not silently fall back to random weights.
 
 Run the configured CIFAR-100 B0-Inc10 training and task-agnostic evaluation with:
 
 ```powershell
-python main.py --data-root <cifar-100-root> --output-dir outputs/cifar100_b0_inc10
+python main.py --data-root <cifar-100-root> --pretrained --output-dir outputs/cifar100_b0_inc10
 ```
 
 During training, each task/epoch displays running total, CE, KD, and sparsity
@@ -59,9 +61,11 @@ literally, although it equals one and therefore does not itself encourage
 sparsity.
 
 Set `QKD_VIT_B16_IN21K_WEIGHTS` or pass `--checkpoint-path <file>` to load a
-local pretrained backbone, or use `--pretrained` to load the default weights
-from timm. Training settings can be changed with CLI options; the Kaggle
-notebook supports either local weights or timm's pretrained download.
+local pretrained backbone. To use timm's ImageNet-21K weights, run with
+`--pretrained`; `--model-name` defaults to
+`vit_base_patch16_224.augreg_in21k` and rejects non-IN21K tags when downloading.
+Training settings can be changed with CLI options; the Kaggle notebook
+supports either local weights or timm's pretrained download.
 
 ```python
 import os
