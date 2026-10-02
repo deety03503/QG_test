@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--data-root",
-        default=os.environ.get("QKD_CIFAR100_ROOT", "/kaggle/input/cifar_100"),
+        default=os.environ.get("QKD_CIFAR100_ROOT", "/kaggle/input/Cifar_100"),
         help="Directory containing the extracted cifar-100-python folder.",
     )
     parser.add_argument(
