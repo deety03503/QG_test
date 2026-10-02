@@ -105,3 +105,33 @@ def test_incremental_trainer_freezes_completed_tasks():
         for head in trainer.task_heads
         for parameter in head.parameters()
     )
+
+
+def test_incremental_trainer_reports_running_loss_and_accuracy(monkeypatch):
+    import qkd.engine.trainer as trainer_module
+
+    recorded_postfixes = []
+
+    class RecordingProgress:
+        def __init__(self, iterable, **kwargs):
+            self.iterable = iterable
+
+        def __iter__(self):
+            return iter(self.iterable)
+
+        def set_postfix(self, **values):
+            recorded_postfixes.append(values)
+
+    monkeypatch.setattr(trainer_module, "tqdm", RecordingProgress)
+    model = PretrainedViT(TinyBackbone(), bottleneck_dim=2)
+    trainer = IncrementalTrainer(model, device=torch.device("cpu"))
+    inputs = torch.randn(8, 4)
+    labels = torch.tensor([0, 1] * 4)
+    loader = DataLoader(TensorDataset(inputs, labels), batch_size=4)
+
+    trainer.fit_task(0, loader, [0, 1], epochs=1)
+
+    assert len(recorded_postfixes) == len(loader)
+    assert all(set(metrics) == {"loss", "accuracy"} for metrics in recorded_postfixes)
+    assert all(metrics["loss"] for metrics in recorded_postfixes)
+    assert all(metrics["accuracy"].endswith("%") for metrics in recorded_postfixes)

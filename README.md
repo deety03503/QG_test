@@ -40,6 +40,10 @@ Run the configured CIFAR-100 B0-Inc10 training with:
 python main.py --data-root <cifar-100-root> --output-dir outputs/cifar100_b0_inc10
 ```
 
+During training, each task/epoch displays a batch progress bar with running
+loss and training accuracy. This accuracy is measured on the training batches
+seen so far in that epoch; it is not validation or test accuracy.
+
 Set `QKD_VIT_B16_IN21K_WEIGHTS` or pass `--checkpoint-path <file>` to load the
 pretrained backbone. Training settings can be changed with CLI options; the
 Kaggle notebook only forwards its configuration to `main.py`.

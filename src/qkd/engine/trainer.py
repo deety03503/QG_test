@@ -6,6 +6,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
 
 class IncrementalTrainer:
@@ -60,10 +61,16 @@ class IncrementalTrainer:
 
         self.encoder.eval()
         head.train()
-        for _ in range(epochs):
+        for epoch in range(epochs):
             total_loss = 0.0
-            batch_count = 0
-            for images, labels in train_loader:
+            sample_count = 0
+            correct_count = 0
+            progress = tqdm(
+                train_loader,
+                desc=f"Task {task_id + 1} | Epoch {epoch + 1}/{epochs}",
+                unit="batch",
+            )
+            for images, labels in progress:
                 images = images.to(self.device, non_blocking=True)
                 labels = labels.to(self.device, dtype=torch.long, non_blocking=True)
                 matches = labels.unsqueeze(1).eq(class_id_tensor)
@@ -79,15 +86,22 @@ class IncrementalTrainer:
                 ):
                     logits = head(self.encoder(images))
                     loss = F.cross_entropy(logits, targets)
+                batch_size = labels.size(0)
+                total_loss += loss.detach().item() * batch_size
+                correct_count += (logits.detach().argmax(dim=1) == targets).sum().item()
+                sample_count += batch_size
+                progress.set_postfix(
+                    loss=f"{total_loss / sample_count:.4f}",
+                    accuracy=f"{100 * correct_count / sample_count:.2f}%",
+                )
+
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
-                total_loss += loss.detach().item()
-                batch_count += 1
 
-            if batch_count == 0:
+            if sample_count == 0:
                 raise ValueError("train_loader must contain at least one batch")
-            epoch_losses.append(total_loss / batch_count)
+            epoch_losses.append(total_loss / sample_count)
             scheduler.step()
 
         for routed_mlp in encoder._routed_mlps:
