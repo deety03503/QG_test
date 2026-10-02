@@ -218,6 +218,7 @@ def run(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     losses_by_task: list[list[float]] = []
     task_agnostic_dev_accuracies: list[float] = []
+    per_task_dev_accuracies: list[list[float]] = []
     accumulated_classes: set[int] = set()
 
     for task_id, classes in enumerate(task_classes):
@@ -259,6 +260,30 @@ def run(args: argparse.Namespace) -> None:
         task_agnostic_dev_accuracy = trainer.evaluate(dev_loader)
         task_agnostic_dev_accuracies.append(task_agnostic_dev_accuracy)
         current_final_dev_accuracy = final_accuracy(task_agnostic_dev_accuracies)
+        current_task_dev_accuracies: list[float] = []
+        for learned_task_id, learned_classes in enumerate(task_classes[: task_id + 1]):
+            learned_class_set = set(learned_classes)
+            learned_dev_indices = [
+                index
+                for index in dev_indices
+                if train_dataset.targets[index] in learned_class_set
+            ]
+            learned_dev_loader = DataLoader(
+                Subset(train_dataset, learned_dev_indices),
+                batch_size=args.batch_size,
+                shuffle=False,
+                num_workers=args.num_workers,
+                pin_memory=device.type == "cuda",
+                persistent_workers=args.num_workers > 0,
+            )
+            learned_task_accuracy = trainer.evaluate(learned_dev_loader)
+            current_task_dev_accuracies.append(learned_task_accuracy)
+            print(
+                f"Task {learned_task_id + 1} predict dev accuracy: "
+                f"{100 * learned_task_accuracy:.2f}%"
+            )
+            del learned_dev_loader
+        per_task_dev_accuracies.append(current_task_dev_accuracies)
         accumulated_classes.update(classes)
         checkpoint_file = output_dir / f"qkd_task_{task_id + 1:02d}.pt"
         torch.save(
@@ -272,6 +297,7 @@ def run(args: argparse.Namespace) -> None:
                 "epoch_losses": losses_by_task,
                 "epoch_dev_accuracies": trainer.epoch_dev_accuracies,
                 "task_agnostic_dev_accuracies": task_agnostic_dev_accuracies,
+                "per_task_dev_accuracies": per_task_dev_accuracies,
                 "final_incremental_dev_accuracy": current_final_dev_accuracy,
                 "config": vars(args),
             },
@@ -301,6 +327,7 @@ def run(args: argparse.Namespace) -> None:
     metrics = {
         "epoch_dev_accuracies": trainer.epoch_dev_accuracies,
         "task_agnostic_dev_accuracies": task_agnostic_dev_accuracies,
+        "per_task_dev_accuracies": per_task_dev_accuracies,
         "final_incremental_dev_accuracy": final_incremental_dev_accuracy,
         "final_test_accuracy": final_test_accuracy,
     }

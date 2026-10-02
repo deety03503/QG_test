@@ -213,7 +213,10 @@ class IncrementalTrainer:
                 total_loss += loss.detach().item() * batch_size
                 correct_count += (current_logits.detach().argmax(dim=1) == targets).sum().item()
                 sample_count += batch_size
-                progress.set_postfix(accuracy=f"{100 * correct_count / sample_count:.2f}%")
+                progress.set_postfix(
+                    loss=f"{total_loss / sample_count:.4f}",
+                    accuracy=f"{100 * correct_count / sample_count:.2f}%",
+                )
 
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
@@ -244,10 +247,6 @@ class IncrementalTrainer:
             if dev_loader is not None:
                 task_accuracy = self.evaluate_current_adapter(dev_loader, all_seen_classes)
                 task_dev_accuracies.append(task_accuracy)
-                tqdm.write(
-                    f"Task {task_id + 1} | Epoch {epoch + 1}/{epochs} | "
-                    f"task_accuracy={100 * task_accuracy:.2f}%"
-                )
                 self.classifier.train()
             scheduler.step()
 
