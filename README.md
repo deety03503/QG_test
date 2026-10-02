@@ -53,10 +53,13 @@ as inference. The test set is not used during training or model selection;
 final test accuracy is computed once, after all tasks have completed. The run
 writes checkpoints and a `metrics.json`
 containing per-epoch development accuracies, task-agnostic development
-accuracies, and final test accuracy. CUDA training uses BF16 autocast when
-supported, otherwise FP16 with gradient scaling, and clips the global gradient
-norm to 1. Non-finite inputs, activations, logits, or losses stop training with
-the task/epoch/batch location instead of silently propagating NaNs.
+accuracies, final incremental development accuracy (the last task-agnostic
+development score), and final test accuracy. The final test accuracy is
+computed once after all tasks complete and is kept separate from development
+metrics. CUDA training uses BF16 autocast when supported, otherwise FP16 with
+gradient scaling, and clips the global gradient norm to 1. Non-finite inputs,
+activations, logits, or losses stop training with the task/epoch/batch location
+instead of silently propagating NaNs.
 
 The simulator adaptively pools each full feature vector to the qubit count,
 normalizes and maps the pooled values to `[-pi, pi]` rotation angles, then
