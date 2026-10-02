@@ -63,11 +63,11 @@ default in the supplied text.
 - The paper's Eq. 11 applies the L1 norm to softmax-normalized relevance
   weights. The implementation preserves this formula exactly; since the
   weights sum to one, the term is constant and supplies no sparsity gradient.
-- The training progress reports both accuracy among all seen classes and
-  accuracy restricted to the current task classes, along with CE and the
-  lambda-weighted KD and sparsity loss contributions. These displayed terms
-  sum to the total objective. The CE targets remain indices in the global
-  seen-class logits.
+- During each training epoch, the progress bar reports only cumulative
+  training accuracy over all classes seen so far, from the first batch through
+  the current batch. At epoch end, `task_accuracy` is the newest adapter's
+  accuracy on the full development set over all classes seen so far. The CE
+  targets remain indices in the global seen-class logits.
 - The paper does not fully specify adapter-vector construction, mapping vector
   coordinates when `q` differs from feature dimension, or all initialization
   details. The current default loads `vit_base_patch16_224` pretrained weights

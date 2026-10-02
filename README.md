@@ -45,9 +45,11 @@ python main.py --data-root <cifar-100-root> --pretrained --output-dir outputs/ci
 
 By default, 10% of the CIFAR-100 training examples per class are held out as a
 development set (`--dev-fraction` controls this fraction). Training uses only
-the remaining examples. Each task/epoch displays running total, CE, KD, and
-sparsity losses, training accuracy, and development accuracy over all classes
-seen so far using the newest adapter. After each task, task-agnostic
+the remaining examples. During each epoch, the progress bar displays only
+training accuracy, accumulated from the start of that epoch through the
+current batch. At the end of each epoch, it displays `task_accuracy`, the
+accuracy over the full development set across all classes seen so far, evaluated
+using the newest adapter. After each task, task-agnostic
 development accuracy is measured using the same QGTM-weighted adapter fusion
 as inference. The test set is not used during training or model selection;
 final test accuracy is computed once, after all tasks have completed. The run
