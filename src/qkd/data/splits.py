@@ -38,35 +38,3 @@ def make_task_class_splits(
         splits.append(list(class_order[offset : offset + incremental_classes]))
         offset += incremental_classes
     return splits
-
-
-def make_train_dev_split(
-    labels: Sequence[int],
-    dev_fraction: float = 0.1,
-    seed: int = 1993,
-) -> tuple[list[int], list[int]]:
-    """Create a reproducible, class-stratified split of training-set indices."""
-    if len(labels) == 0:
-        raise ValueError("labels must not be empty")
-    if not 0 < dev_fraction < 1:
-        raise ValueError("dev_fraction must be between 0 and 1")
-
-    targets = np.asarray(labels)
-    if targets.ndim != 1:
-        raise ValueError("labels must be a one-dimensional sequence")
-    rng = np.random.RandomState(seed)
-    train_indices: list[int] = []
-    dev_indices: list[int] = []
-    for class_id in np.unique(targets):
-        class_indices = np.flatnonzero(targets == class_id)
-        if class_indices.size < 2:
-            raise ValueError("each class must have at least two samples to split train and dev")
-        shuffled_indices = rng.permutation(class_indices)
-        dev_count = min(
-            max(int(round(class_indices.size * dev_fraction)), 1),
-            class_indices.size - 1,
-        )
-        dev_indices.extend(shuffled_indices[:dev_count].tolist())
-        train_indices.extend(shuffled_indices[dev_count:].tolist())
-
-    return sorted(train_indices), sorted(dev_indices)

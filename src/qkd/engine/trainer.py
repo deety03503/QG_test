@@ -56,7 +56,6 @@ class IncrementalTrainer:
         self.classifier: nn.Linear | None = None
         self.task_class_ids: list[list[int]] = []
         self.task_representations: list[Tensor] = []
-        self.epoch_dev_accuracies: list[list[float]] = []
 
     @property
     def _base_encoder(self) -> nn.Module:
@@ -69,7 +68,6 @@ class IncrementalTrainer:
         seen_classes: Iterable[int],
         epochs: int = 20,
         learning_rate: float = 0.05,
-        dev_loader: DataLoader | None = None,
     ) -> list[float]:
         """Train the next adapter with CE, QKD, and entropy-based gate sparsity."""
         if task_id != len(self.task_class_ids):
@@ -134,7 +132,6 @@ class IncrementalTrainer:
             device=self.device,
         )
         epoch_losses: list[float] = []
-        task_dev_accuracies: list[float] = []
         self.encoder.eval()
         self.qgtm.train()
         self.classifier.train()
@@ -244,10 +241,6 @@ class IncrementalTrainer:
             if sample_count == 0:
                 raise ValueError("train_loader must contain at least one batch")
             epoch_losses.append(total_loss / sample_count)
-            if dev_loader is not None:
-                task_accuracy = self.evaluate_current_adapter(dev_loader, all_seen_classes)
-                task_dev_accuracies.append(task_accuracy)
-                self.classifier.train()
             scheduler.step()
 
         for routed_mlp in encoder._routed_mlps:
@@ -257,51 +250,7 @@ class IncrementalTrainer:
         self.task_representations.append(
             self._adapter_task_representation(encoder, task_id).cpu()
         )
-        self.epoch_dev_accuracies.append(task_dev_accuracies)
         return epoch_losses
-
-    @torch.no_grad()
-    def evaluate_current_adapter(
-        self,
-        data_loader: DataLoader,
-        seen_classes: Iterable[int],
-    ) -> float:
-        """Evaluate the newest adapter over all currently seen classes."""
-        if self.classifier is None:
-            raise RuntimeError("fit at least one task before evaluation")
-        class_ids = [int(class_id) for class_id in seen_classes]
-        if not class_ids or len(set(class_ids)) != len(class_ids):
-            raise ValueError("seen_classes must contain unique class IDs")
-
-        self.encoder.eval()
-        self.classifier.eval()
-        class_indices = torch.tensor(class_ids, device=self.device)
-        target_lookup = torch.full(
-            (max(class_ids) + 1,),
-            -1,
-            dtype=torch.long,
-            device=self.device,
-        )
-        target_lookup[class_indices] = torch.arange(len(class_ids), device=self.device)
-        correct = 0
-        total = 0
-        for images, labels in data_loader:
-            images = images.to(self.device, non_blocking=True)
-            labels = labels.to(self.device, dtype=torch.long, non_blocking=True)
-            if labels.numel() and (
-                labels.min().item() < 0 or labels.max().item() >= target_lookup.numel()
-            ):
-                raise ValueError("evaluation batch contains labels outside seen_classes")
-            targets = target_lookup[labels]
-            if (targets < 0).any():
-                raise ValueError("evaluation batch contains labels outside seen_classes")
-            logits = self.classifier(self.encoder(images))[:, class_indices]
-            predictions = class_indices[logits.argmax(dim=1)]
-            correct += (predictions == labels).sum().item()
-            total += labels.numel()
-        if total == 0:
-            raise ValueError("evaluation data loader must contain at least one sample")
-        return correct / total
 
     @torch.no_grad()
     def predict(self, images: Tensor) -> Tensor:

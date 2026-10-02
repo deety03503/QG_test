@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader, Subset
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from qkd.data.splits import make_class_order, make_task_class_splits, make_train_dev_split
+from qkd.data.splits import make_class_order, make_task_class_splits
 from qkd.engine.trainer import IncrementalTrainer
 from qkd.metrics import final_accuracy
 from qkd.models.vit import PretrainedViT
@@ -57,7 +57,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1993)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=2)
-    parser.add_argument("--dev-fraction", type=float, default=0.1)
     parser.add_argument("--epochs-per-task", type=int, default=20)
     parser.add_argument("--learning-rate", type=float, default=0.05)
     parser.add_argument("--bottleneck-dim", type=int, default=64)
@@ -166,8 +165,6 @@ def create_encoder(args: argparse.Namespace) -> PretrainedViT:
 def run(args: argparse.Namespace) -> None:
     if args.batch_size <= 0 or args.num_workers < 0:
         raise ValueError("batch-size must be positive and num-workers cannot be negative")
-    if not 0 < args.dev_fraction < 1:
-        raise ValueError("dev-fraction must be between 0 and 1")
     if args.epochs_per_task <= 0 or args.learning_rate <= 0:
         raise ValueError("epochs-per-task and learning-rate must be positive")
     if args.svd_dim <= 0 or args.num_qubits <= 0 or args.circuit_layers <= 0:
@@ -185,15 +182,8 @@ def run(args: argparse.Namespace) -> None:
     data_config = timm.data.resolve_model_data_config(encoder.backbone)
     image_transform = timm.data.create_transform(**data_config, is_training=False)
     train_dataset, test_dataset = load_cifar100(args.data_root, image_transform)
-    train_indices, dev_indices = make_train_dev_split(
-        train_dataset.targets,
-        dev_fraction=args.dev_fraction,
-        seed=args.seed,
-    )
-    print(
-        f"Train/dev split: {len(train_indices):,} train images; "
-        f"{len(dev_indices):,} dev images ({args.dev_fraction:.0%} dev per class)"
-    )
+    train_indices = range(len(train_dataset))
+    print(f"Training images: {len(train_dataset):,}; test images: {len(test_dataset):,}")
     class_order = make_class_order(num_classes=100, seed=args.seed)
     task_classes = make_task_class_splits(
         class_order,
@@ -217,8 +207,8 @@ def run(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
     losses_by_task: list[list[float]] = []
-    task_agnostic_dev_accuracies: list[float] = []
-    per_task_dev_accuracies: list[list[float]] = []
+    task_agnostic_test_accuracies: list[float] = []
+    per_task_test_accuracies: list[list[float]] = []
     accumulated_classes: set[int] = set()
 
     for task_id, classes in enumerate(task_classes):
@@ -235,13 +225,13 @@ def run(args: argparse.Namespace) -> None:
             persistent_workers=args.num_workers > 0,
         )
         seen_classes = accumulated_classes | class_set
-        dev_task_indices = [
+        seen_test_indices = [
             index
-            for index in dev_indices
-            if train_dataset.targets[index] in seen_classes
+            for index in range(len(test_dataset))
+            if test_dataset.targets[index] in seen_classes
         ]
-        dev_loader = DataLoader(
-            Subset(train_dataset, dev_task_indices),
+        seen_test_loader = DataLoader(
+            Subset(test_dataset, seen_test_indices),
             batch_size=args.batch_size,
             shuffle=False,
             num_workers=args.num_workers,
@@ -254,36 +244,35 @@ def run(args: argparse.Namespace) -> None:
             seen_classes=classes,
             epochs=args.epochs_per_task,
             learning_rate=args.learning_rate,
-            dev_loader=dev_loader,
         )
         losses_by_task.append(epoch_losses)
-        task_agnostic_dev_accuracy = trainer.evaluate(dev_loader)
-        task_agnostic_dev_accuracies.append(task_agnostic_dev_accuracy)
-        current_final_dev_accuracy = final_accuracy(task_agnostic_dev_accuracies)
-        current_task_dev_accuracies: list[float] = []
+        task_agnostic_test_accuracy = trainer.evaluate(seen_test_loader)
+        task_agnostic_test_accuracies.append(task_agnostic_test_accuracy)
+        current_final_test_accuracy = final_accuracy(task_agnostic_test_accuracies)
+        current_task_test_accuracies: list[float] = []
         for learned_task_id, learned_classes in enumerate(task_classes[: task_id + 1]):
             learned_class_set = set(learned_classes)
-            learned_dev_indices = [
+            learned_test_indices = [
                 index
-                for index in dev_indices
-                if train_dataset.targets[index] in learned_class_set
+                for index in range(len(test_dataset))
+                if test_dataset.targets[index] in learned_class_set
             ]
-            learned_dev_loader = DataLoader(
-                Subset(train_dataset, learned_dev_indices),
+            learned_test_loader = DataLoader(
+                Subset(test_dataset, learned_test_indices),
                 batch_size=args.batch_size,
                 shuffle=False,
                 num_workers=args.num_workers,
                 pin_memory=device.type == "cuda",
                 persistent_workers=args.num_workers > 0,
             )
-            learned_task_accuracy = trainer.evaluate(learned_dev_loader)
-            current_task_dev_accuracies.append(learned_task_accuracy)
+            learned_task_accuracy = trainer.evaluate(learned_test_loader)
+            current_task_test_accuracies.append(learned_task_accuracy)
             print(
-                f"Task {learned_task_id + 1} predict dev accuracy: "
+                f"Task {learned_task_id + 1} predict test accuracy: "
                 f"{100 * learned_task_accuracy:.2f}%"
             )
-            del learned_dev_loader
-        per_task_dev_accuracies.append(current_task_dev_accuracies)
+            del learned_test_loader
+        per_task_test_accuracies.append(current_task_test_accuracies)
         accumulated_classes.update(classes)
         checkpoint_file = output_dir / f"qkd_task_{task_id + 1:02d}.pt"
         torch.save(
@@ -295,10 +284,9 @@ def run(args: argparse.Namespace) -> None:
                 "task_class_ids": trainer.task_class_ids,
                 "task_representations": trainer.task_representations,
                 "epoch_losses": losses_by_task,
-                "epoch_dev_accuracies": trainer.epoch_dev_accuracies,
-                "task_agnostic_dev_accuracies": task_agnostic_dev_accuracies,
-                "per_task_dev_accuracies": per_task_dev_accuracies,
-                "final_incremental_dev_accuracy": current_final_dev_accuracy,
+                "task_agnostic_test_accuracies": task_agnostic_test_accuracies,
+                "per_task_test_accuracies": per_task_test_accuracies,
+                "final_incremental_test_accuracy": current_final_test_accuracy,
                 "config": vars(args),
             },
             checkpoint_file,
@@ -306,12 +294,12 @@ def run(args: argparse.Namespace) -> None:
         print(
             f"Task {task_id + 1}/{len(task_classes)} complete; "
             f"final loss={epoch_losses[-1]:.4f}; "
-            f"task-agnostic dev accuracy={task_agnostic_dev_accuracy:.4f}; "
-            f"final incremental dev accuracy={current_final_dev_accuracy:.4f}; "
+            f"task-agnostic test accuracy={task_agnostic_test_accuracy:.4f}; "
+            f"final incremental test accuracy={current_final_test_accuracy:.4f}; "
             f"saved {checkpoint_file}"
         )
         del train_loader
-        del dev_loader
+        del seen_test_loader
 
     test_loader = DataLoader(
         test_dataset,
@@ -322,18 +310,17 @@ def run(args: argparse.Namespace) -> None:
         persistent_workers=args.num_workers > 0,
     )
     final_test_accuracy = trainer.evaluate(test_loader)
-    final_incremental_dev_accuracy = final_accuracy(task_agnostic_dev_accuracies)
+    final_incremental_test_accuracy = final_accuracy(task_agnostic_test_accuracies)
 
     metrics = {
-        "epoch_dev_accuracies": trainer.epoch_dev_accuracies,
-        "task_agnostic_dev_accuracies": task_agnostic_dev_accuracies,
-        "per_task_dev_accuracies": per_task_dev_accuracies,
-        "final_incremental_dev_accuracy": final_incremental_dev_accuracy,
+        "task_agnostic_test_accuracies": task_agnostic_test_accuracies,
+        "per_task_test_accuracies": per_task_test_accuracies,
+        "final_incremental_test_accuracy": final_incremental_test_accuracy,
         "final_test_accuracy": final_test_accuracy,
     }
     metrics_file = output_dir / "metrics.json"
     metrics_file.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-    print(f"Final incremental dev accuracy: {final_incremental_dev_accuracy:.4f}")
+    print(f"Final incremental test accuracy: {final_incremental_test_accuracy:.4f}")
     print(f"Final test accuracy: {final_test_accuracy:.4f}")
     print(f"Saved evaluation metrics to {metrics_file}")
 

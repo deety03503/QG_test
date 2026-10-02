@@ -61,13 +61,17 @@ default in the supplied text.
   vectors, uses the resulting softmax weights to fuse adapter features, and
   applies the global classifier over seen classes.
 - The paper's Eq. 11 applies the L1 norm to softmax-normalized relevance
-  weights. The implementation preserves this formula exactly; since the
-  weights sum to one, the term is constant and supplies no sparsity gradient.
-- During each training epoch, the progress bar reports only cumulative
-  training accuracy over all classes seen so far, from the first batch through
-  the current batch. At epoch end, `task_accuracy` is the newest adapter's
-  accuracy on the full development set over all classes seen so far. The CE
-  targets remain indices in the global seen-class logits.
+  weights, which is constant because the weights sum to one. To make the
+  sparsity term effective, this implementation instead minimizes the entropy
+  of those relevance weights; this is an intentional deviation from Eq. 11
+  that encourages the gate to concentrate on fewer tasks.
+- The full official training split is used for training; the official test
+  split is used for evaluation, with no held-out development set. During each
+  training epoch, the progress bar reports cumulative total loss and training
+  accuracy from the first batch through the current batch. After each task,
+  task-agnostic test accuracy over seen classes and separate test accuracy for
+  each learned task are reported. The CE targets remain indices in the global
+  seen-class logits.
 - The paper does not fully specify adapter-vector construction, mapping vector
   coordinates when `q` differs from feature dimension, or all initialization
   details. The current default loads `vit_base_patch16_224` pretrained weights
