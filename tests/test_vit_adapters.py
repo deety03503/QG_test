@@ -84,6 +84,7 @@ def test_incremental_trainer_freezes_completed_tasks():
     first_adapter = model._routed_mlps[0].adapters[0]
     frozen_weights = [parameter.detach().clone() for parameter in first_adapter.parameters()]
     assert all(not parameter.requires_grad for parameter in first_adapter.parameters())
+    assert all(not parameter.requires_grad for parameter in trainer.classifier.parameters())
 
     second_labels = torch.tensor([2, 3] * 4)
     second_loader = DataLoader(TensorDataset(inputs, second_labels), batch_size=4)
@@ -102,9 +103,16 @@ def test_incremental_trainer_freezes_completed_tasks():
     )
     assert all(
         not parameter.requires_grad
-        for head in trainer.task_heads
-        for parameter in head.parameters()
+        for parameter in trainer.classifier.parameters()
     )
+    assert trainer.classifier.out_features == 4
+    predictions = trainer.predict(inputs[:2])
+    assert predictions.shape == (2,)
+    assert set(predictions.tolist()).issubset({0, 1, 2, 3})
+    accuracy = trainer.evaluate(
+        DataLoader(TensorDataset(inputs, second_labels), batch_size=4)
+    )
+    assert 0.0 <= accuracy <= 1.0
 
 
 def test_incremental_trainer_reports_running_loss_and_accuracy(monkeypatch):

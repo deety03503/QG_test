@@ -1,14 +1,17 @@
-"""Parameterized quantum feature-map interface for QGTM."""
+"""Differentiable state-vector quantum feature map used by QGTM."""
 
+import torch
 from torch import Tensor, nn
+from torch.nn import functional as F
 
 
 class QuantumFeatureMap(nn.Module):
-    """Interface for the paper's encoding, variational circuit, and measurement.
+    """Encode sample/task vectors and return their quantum-state fidelities.
 
-    State preparation and measurement are intentionally left for the resolved
-    backend implementation; the supplied paper text does not define them
-    sufficiently to choose a faithful circuit implementation.
+    The circuit follows Eqs. 5-10 in the paper: data and trainable ``Ry``
+    rotations are applied on each qubit, followed by a nearest-neighbour CNOT
+    chain. A real state vector is sufficient because these gates have real
+    matrix entries.
     """
 
     def __init__(self, input_dim: int, num_qubits: int, num_layers: int = 1):
@@ -18,7 +21,66 @@ class QuantumFeatureMap(nn.Module):
         self.input_dim = input_dim
         self.num_qubits = num_qubits
         self.num_layers = num_layers
+        self.rotation_angles = nn.Parameter(torch.zeros(num_layers, num_qubits))
 
     def forward(self, sample_features: Tensor, task_states: Tensor) -> Tensor:
-        """Return one sample-to-task correlation score per input/task pair."""
-        raise NotImplementedError("Implement the paper-verified QGTM circuit backend")
+        """Return state fidelities with shape ``(batch, tasks)``."""
+        if sample_features.ndim != 2 or sample_features.shape[1] != self.input_dim:
+            raise ValueError("sample_features must have shape (batch, input_dim)")
+        if task_states.ndim != 2 or task_states.shape[1] != self.input_dim:
+            raise ValueError("task_states must have shape (tasks, input_dim)")
+        if sample_features.shape[0] == 0:
+            raise ValueError("sample_features must contain at least one sample")
+        if not torch.isfinite(sample_features).all() or not torch.isfinite(task_states).all():
+            raise ValueError("sample_features and task_states must contain finite values")
+        if task_states.shape[0] == 0:
+            return sample_features.new_empty((sample_features.shape[0], 0))
+
+        dtype = self.rotation_angles.dtype
+        sample_state = self._encode(sample_features.to(dtype=dtype))
+        task_state = self._encode(task_states.to(device=sample_features.device, dtype=dtype))
+        return (sample_state @ task_state.transpose(0, 1)).square().clamp(0.0, 1.0)
+
+    def _encode(self, vectors: Tensor) -> Tensor:
+        normalized = F.normalize(vectors, p=2, dim=1)
+        if self.num_qubits > self.input_dim:
+            angles = F.pad(normalized, (0, self.num_qubits - self.input_dim))
+        else:
+            angles = normalized[:, : self.num_qubits]
+
+        batch_size = angles.shape[0]
+        state = angles.new_zeros((batch_size, 1 << self.num_qubits))
+        state[:, 0] = 1.0
+        for layer in range(self.num_layers):
+            for qubit in range(self.num_qubits):
+                state = self._apply_ry(state, angles[:, qubit], qubit)
+                state = self._apply_ry(
+                    state,
+                    self.rotation_angles[layer, qubit].expand(batch_size),
+                    qubit,
+                )
+            for control in range(self.num_qubits - 1):
+                state = self._apply_cnot(state, control, control + 1)
+        return state
+
+    def _apply_ry(self, state: Tensor, angles: Tensor, qubit: int) -> Tensor:
+        tensor_state = state.reshape(state.shape[0], *([2] * self.num_qubits))
+        axis = qubit + 1
+        moved_state = tensor_state.movedim(axis, 1).reshape(state.shape[0], 2, -1)
+        cosine = torch.cos(angles / 2).unsqueeze(1)
+        sine = torch.sin(angles / 2).unsqueeze(1)
+        zero = cosine * moved_state[:, 0] - sine * moved_state[:, 1]
+        one = sine * moved_state[:, 0] + cosine * moved_state[:, 1]
+        rotated = torch.stack((zero, one), dim=1).reshape_as(moved_state)
+        return (
+            rotated.reshape(state.shape[0], *([2] * self.num_qubits))
+            .movedim(1, axis)
+            .reshape_as(state)
+        )
+
+    def _apply_cnot(self, state: Tensor, control: int, target: int) -> Tensor:
+        basis = torch.arange(state.shape[1], device=state.device)
+        control_mask = 1 << (self.num_qubits - control - 1)
+        target_mask = 1 << (self.num_qubits - target - 1)
+        permutation = torch.where((basis & control_mask) != 0, basis ^ target_mask, basis)
+        return state.index_select(1, permutation)

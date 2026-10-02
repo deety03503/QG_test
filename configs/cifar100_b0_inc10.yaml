@@ -21,7 +21,7 @@ qgtm:
   qubits: 9
   circuit_layers: 1
   temperature: 1.0
-  backend: pending
+  backend: torch_statevector
 
 training:
   batch_size: 32

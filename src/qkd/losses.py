@@ -27,8 +27,25 @@ def task_interaction_distillation(
     if historical_logits.shape[2] != current_logits.shape[1]:
         raise ValueError("historical and current logits must share the class dimension")
 
+    if historical_logits.dtype in (torch.float16, torch.bfloat16):
+        historical_logits = historical_logits.float()
+    if current_logits.dtype in (torch.float16, torch.bfloat16):
+        current_logits = current_logits.float()
+    if relevance.dtype in (torch.float16, torch.bfloat16):
+        relevance = relevance.float()
     old_log_probs = F.log_softmax(historical_logits, dim=-1)
     old_probs = old_log_probs.exp()
     new_log_probs = F.log_softmax(current_logits, dim=-1).unsqueeze(1)
     per_task_kl = (old_probs * (old_log_probs - new_log_probs)).sum(dim=-1)
     return (per_task_kl * relevance).sum(dim=1).mean()
+
+
+def task_gate_sparsity(relevance: Tensor) -> Tensor:
+    """Compute the paper's L1 penalty on softmax-normalized task weights."""
+    if relevance.ndim != 2:
+        raise ValueError("relevance must have shape (batch, tasks)")
+    if relevance.shape[1] == 0:
+        raise ValueError("at least one task relevance weight is required")
+    if not torch.isfinite(relevance).all():
+        raise ValueError("relevance must contain finite values")
+    return relevance.abs().sum(dim=1).mean()

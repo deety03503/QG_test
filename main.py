@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import random
 import sys
@@ -17,6 +18,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from qkd.data.splits import make_class_order, make_task_class_splits
 from qkd.engine.trainer import IncrementalTrainer
+from qkd.metrics import average_incremental_accuracy, final_accuracy
 from qkd.models.vit import PretrainedViT
 
 
@@ -45,6 +47,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bottleneck-dim", type=int, default=64)
     parser.add_argument("--initial-classes", type=int, default=0)
     parser.add_argument("--incremental-classes", type=int, default=10)
+    parser.add_argument("--svd-dim", type=int, default=12)
+    parser.add_argument("--num-qubits", type=int, default=9)
+    parser.add_argument("--circuit-layers", type=int, default=1)
+    parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--lambda-kd", type=float, default=1.0)
+    parser.add_argument("--lambda-sparse", type=float, default=0.05)
     return parser.parse_args()
 
 
@@ -139,12 +147,16 @@ def run(args: argparse.Namespace) -> None:
         raise ValueError("batch-size must be positive and num-workers cannot be negative")
     if args.epochs_per_task <= 0 or args.learning_rate <= 0:
         raise ValueError("epochs-per-task and learning-rate must be positive")
+    if args.svd_dim <= 0 or args.num_qubits <= 0 or args.circuit_layers <= 0:
+        raise ValueError("svd-dim, num-qubits, and circuit-layers must be positive")
+    if args.temperature <= 0 or args.lambda_kd < 0 or args.lambda_sparse < 0:
+        raise ValueError("temperature must be positive and loss weights non-negative")
 
     set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     gpu_count = torch.cuda.device_count()
     print(f"PyTorch: {torch.__version__}; device: {device}; visible GPUs: {gpu_count}")
-    train_dataset, _ = load_cifar100(args.data_root)
+    train_dataset, test_dataset = load_cifar100(args.data_root)
     class_order = make_class_order(num_classes=100, seed=args.seed)
     task_classes = make_task_class_splits(
         class_order,
@@ -155,10 +167,22 @@ def run(args: argparse.Namespace) -> None:
 
     encoder = create_encoder(args).to(device).eval()
     model = torch.nn.DataParallel(encoder) if gpu_count >= 2 else encoder
-    trainer = IncrementalTrainer(model, device=device, use_amp=device.type == "cuda")
+    trainer = IncrementalTrainer(
+        model,
+        device=device,
+        use_amp=device.type == "cuda",
+        num_qubits=args.num_qubits,
+        circuit_layers=args.circuit_layers,
+        svd_dim=args.svd_dim,
+        temperature=args.temperature,
+        lambda_kd=args.lambda_kd,
+        lambda_sparse=args.lambda_sparse,
+    )
     output_dir = Path(args.output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
     losses_by_task: list[list[float]] = []
+    stage_accuracies: list[float] = []
+    accumulated_classes: set[int] = set()
 
     for task_id, classes in enumerate(task_classes):
         class_set = set(classes)
@@ -183,26 +207,55 @@ def run(args: argparse.Namespace) -> None:
             learning_rate=args.learning_rate,
         )
         losses_by_task.append(epoch_losses)
+        accumulated_classes.update(classes)
+        test_indices = [
+            index
+            for index, label in enumerate(test_dataset.targets)
+            if label in accumulated_classes
+        ]
+        test_loader = DataLoader(
+            Subset(test_dataset, test_indices),
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            pin_memory=device.type == "cuda",
+            persistent_workers=args.num_workers > 0,
+        )
+        stage_accuracy = trainer.evaluate(test_loader)
+        stage_accuracies.append(stage_accuracy)
         checkpoint_file = output_dir / f"qkd_task_{task_id + 1:02d}.pt"
         torch.save(
             {
                 "task_id": task_id,
                 "encoder": encoder.state_dict(),
-                "task_heads": trainer.task_heads.state_dict(),
+                "classifier": trainer.classifier.state_dict(),
+                "qgtm": trainer.qgtm.state_dict(),
                 "task_class_ids": trainer.task_class_ids,
+                "task_representations": trainer.task_representations,
                 "epoch_losses": losses_by_task,
+                "stage_accuracies": stage_accuracies,
                 "config": vars(args),
             },
             checkpoint_file,
         )
         print(
             f"Task {task_id + 1}/{len(task_classes)} complete; "
-            f"final loss={epoch_losses[-1]:.4f}; saved {checkpoint_file}"
+            f"final loss={epoch_losses[-1]:.4f}; "
+            f"task-agnostic accuracy={stage_accuracy:.4f}; saved {checkpoint_file}"
         )
         del train_loader
+        del test_loader
 
-    print("All task adapters and task-local classifiers are frozen.")
-    print("QGTM, TIKD, and task-agnostic evaluation are not implemented yet.")
+    metrics = {
+        "stage_accuracies": stage_accuracies,
+        "average_incremental_accuracy": average_incremental_accuracy(stage_accuracies),
+        "final_accuracy": final_accuracy(stage_accuracies),
+    }
+    metrics_file = output_dir / "metrics.json"
+    metrics_file.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    print(f"Average incremental accuracy: {metrics['average_incremental_accuracy']:.4f}")
+    print(f"Final accuracy: {metrics['final_accuracy']:.4f}")
+    print(f"Saved evaluation metrics to {metrics_file}")
 
 
 def main() -> None:

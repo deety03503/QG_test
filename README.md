@@ -5,11 +5,12 @@ Distillation for Pre-trained Model-based Class-Incremental Learning**. The
 companion *Class-Incremental Learning: A Survey* grounds the CIL protocol,
 class-split convention, and memory-accounting choices.
 
-The repository has a frozen ViT wrapper with per-task parallel adapters,
-paper-derived CIL split/metric utilities, and sequential training for one
-task-local adapter and classifier at a time. The quantum circuit, QGTM,
-quantum-guided distillation, task-agnostic inference, and result aggregation
-are still pending; this is not yet an end-to-end reproduction.
+The repository implements a frozen ViT wrapper with per-task parallel
+adapters, the paper's trainable `Ry`/CNOT state-vector QGTM, fidelity-based
+task relevance, relevance-weighted task-interaction distillation, incremental
+global classification, and task-agnostic adapter fusion. It evaluates after
+each task and reports average incremental and final accuracy. Use the exact
+pretrained checkpoint and the paper's dataset protocol for a comparable run.
 
 ## Setup
 
@@ -34,15 +35,24 @@ backbone remains frozen, so those results are not paper-comparable. Do not
 assume a similarly named ImageNet-21K checkpoint is identical to the authors'
 checkpoint.
 
-Run the configured CIFAR-100 B0-Inc10 training with:
+Run the configured CIFAR-100 B0-Inc10 training and task-agnostic evaluation with:
 
 ```powershell
 python main.py --data-root <cifar-100-root> --output-dir outputs/cifar100_b0_inc10
 ```
 
 During training, each task/epoch displays a batch progress bar with running
-loss and training accuracy. This accuracy is measured on the training batches
-seen so far in that epoch; it is not validation or test accuracy.
+loss and training accuracy. The run also evaluates task-agnostically on all
+classes learned so far after every task. It writes checkpoints and a
+`metrics.json` containing stage accuracies, average incremental accuracy, and
+final accuracy to the output directory.
+
+The simulator applies data and trainable `Ry` rotations followed by a
+nearest-neighbour CNOT chain in each circuit layer. Task representations are
+formed by truncated SVD of the down/up adapter projection matrices, then
+normalized. The paper defines its sparsity term as the L1 norm of softmax
+relevance weights; this expression is retained literally, although it equals
+one and therefore does not itself encourage sparsity.
 
 Set `QKD_VIT_B16_IN21K_WEIGHTS` or pass `--checkpoint-path <file>` to load the
 pretrained backbone. Training settings can be changed with CLI options; the
@@ -71,7 +81,7 @@ docs/                    Reproduction protocol and paper ambiguities
 src/qkd/data/             Class-order and incremental split utilities
 src/qkd/engine/           Sequential task training
 src/qkd/models/           Frozen ViT and task-specific parallel adapters
-src/qkd/quantum/          QGTM score/circuit components
+src/qkd/quantum/          Differentiable QGTM circuit and relevance weights
 src/qkd/losses.py         Relevance-weighted task distillation
 src/qkd/metrics.py        Average and final incremental accuracy
 tests/                    Unit and integration tests

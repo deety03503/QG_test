@@ -36,40 +36,33 @@ The 9-qubit default in the starter config is provisional: it is the middle
 setting in the paper's 3/6/9/12/15-qubit sweep, not a clearly identified
 default in the supplied text.
 
-## Details to resolve
+## Paper-faithful implementation choices
 
-1. The paper discusses projected quantum kernels/local observables but defines
-   the method's task relevance as state fidelity. The exact task-state
-   preparation from the SVD vector and mapping of feature dimensions to qubit
-   angles are not fully specified. Recover these from the authors' code or
-   document the implementation choice and backend/version.
-2. The text/figure describes feature-level distillation, while Eq. 13 defines
-   KL divergence from old-adapter logits to new-adapter logits. The current
-   loss helper follows Eq. 13; confirm intended behavior before final runs.
-3. The sparsity term is written as `||alpha||_1` after softmax. Nonnegative
-   softmax weights sum to one, so this term is constant and cannot induce
-   sparsity. Verify whether the intended penalty is applied before softmax or
-   uses a different expression.
-4. Inference is described as adapter selection or fusion, without a fully
-   specified classifier-head procedure in the supplied text. Implement and
-   report the routing/head procedure explicitly, cross-checking the released
-   code.
-5. Exact checkpoint, image preprocessing, label order, split files, and random
-   seeds affect results. Record their versions/hashes and do not substitute an
-   unverified checkpoint. Adapter initialization and the exact input
-   preprocessing should also be verified against the released implementation.
+- The QGTM uses a differentiable PyTorch state-vector simulator. Data angles
+  are the first `q` coordinates of normalized vectors; each layer applies
+  per-qubit data `Ry` rotations, trainable `Ry` rotations, and the paper's
+  adjacent-qubit CNOT chain. Fidelity is the squared state-vector inner
+  product.
+- A task vector is computed from the learned adapter down/up projection
+  matrices: concatenate them by feature columns, retain the rank-`r` truncated
+  SVD, multiply the reconstruction by an all-ones vector, and normalize.
+- Training keeps the pretrained backbone and previous adapters frozen; it
+  trains only the current adapter, a global classifier, and the QGTM rotations.
+  The classification head grows with the set of seen class IDs. The TIKD loss
+  follows Eq. 13 exactly: relevance-weighted `KL(old adapter || current
+  adapter)` over the seen-class logits.
+- Task-agnostic inference computes QGTM relevances against all learned task
+  vectors, uses the resulting softmax weights to fuse adapter features, and
+  applies the global classifier over seen classes.
+- The paper's Eq. 11 applies the L1 norm to softmax-normalized relevance
+  weights. The implementation preserves this formula exactly; since the
+  weights sum to one, the term is constant and supplies no sparsity gradient.
+- The paper does not fully specify adapter-vector construction, mapping vector
+  coordinates when `q` differs from feature dimension, or all initialization
+  details. The choices above make these steps deterministic and are not
+  claimed as author-released implementation details.
 
-## Implementation order
-
-1. Verify dataset splits and preprocessing against the cited benchmark code;
-   add loaders and per-task datasets.
-2. Load the exact frozen ViT-B/16-IN21K checkpoint and validate adapters on
-   every block; the `PretrainedViT` wrapper currently covers this portion.
-3. Implement and test QGTM state preparation, parameterized circuit,
-   measurement, and gradients using the resolved quantum backend.
-4. Add task heads, current/previous adapter outputs, confirmed distillation and
-   sparsity losses, and per-task optimizer lifecycle.
-5. Implement task-agnostic inference routing, per-stage evaluation, and result
-   aggregation.
-6. Reproduce baselines and ablations; log seeds, parameters, memory, latency,
-   and checkpoint provenance.
+For comparable results, provide the exact frozen ViT-B/16-IN21K checkpoint,
+dataset preprocessing, class order, and random seed. Checkpoint provenance and
+preprocessing should be recorded with experiment outputs. Baseline comparison,
+ablations, and extended benchmark datasets remain separate follow-up work.
