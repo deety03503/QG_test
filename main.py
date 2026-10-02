@@ -32,7 +32,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint-path",
         default=os.environ.get("QKD_VIT_B16_IN21K_WEIGHTS"),
-        help="Optional exact ViT-B/16-IN21K checkpoint; absent means random initialization.",
+        help="Optional local ViT checkpoint. If omitted, use --pretrained or random initialization.",
+    )
+    parser.add_argument(
+        "--pretrained",
+        action="store_true",
+        help="Load the model's default pretrained weights from timm (may require internet access).",
     )
     parser.add_argument(
         "--output-dir",
@@ -122,7 +127,11 @@ def load_cifar100(data_root: str):
 
 def create_encoder(args: argparse.Namespace) -> PretrainedViT:
     checkpoint_path = Path(args.checkpoint_path).expanduser() if args.checkpoint_path else None
-    if checkpoint_path is not None and checkpoint_path.is_file():
+    if checkpoint_path is not None:
+        if args.pretrained:
+            raise ValueError("choose either --checkpoint-path or --pretrained, not both")
+        if not checkpoint_path.is_file():
+            raise FileNotFoundError(f"ViT checkpoint not found: {checkpoint_path}")
         print(f"Loading pretrained checkpoint: {checkpoint_path}")
         return PretrainedViT.from_pretrained(
             checkpoint_path=checkpoint_path,
@@ -132,13 +141,13 @@ def create_encoder(args: argparse.Namespace) -> PretrainedViT:
 
     import timm
 
-    if checkpoint_path is None:
-        print("No ViT checkpoint configured; initializing the backbone with random weights.")
+    if args.pretrained:
+        print(f"Loading {args.model_name} pretrained weights from timm.")
+        backbone = timm.create_model(args.model_name, pretrained=True, num_classes=0)
     else:
-        print(f"Checkpoint not found at {checkpoint_path}; initializing with random weights.")
-    print("Starting sequential training at task 1 with this new model.")
-    print("The randomly initialized backbone remains frozen; results are not paper-comparable.")
-    backbone = timm.create_model(args.model_name, pretrained=False, num_classes=0)
+        print("No pretrained weights requested; initializing the backbone randomly.")
+        print("The frozen random backbone is not paper-comparable.")
+        backbone = timm.create_model(args.model_name, pretrained=False, num_classes=0)
     return PretrainedViT(backbone, bottleneck_dim=args.bottleneck_dim)
 
 
