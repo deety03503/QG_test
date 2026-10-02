@@ -195,3 +195,14 @@ def test_incremental_distillation_excludes_classes_not_seen_by_old_tasks(monkeyp
         historical_shape[1:] == (1, 2) and current_shape[1] == 2
         for historical_shape, current_shape in observed_shapes
     )
+
+
+def test_incremental_trainer_stops_on_non_finite_input():
+    model = PretrainedViT(TinyBackbone(), bottleneck_dim=2)
+    trainer = IncrementalTrainer(model, device=torch.device("cpu"))
+    images = torch.tensor([[float("nan"), 0.0, 0.0, 0.0]])
+    labels = torch.tensor([0])
+    loader = DataLoader(TensorDataset(images, labels), batch_size=1)
+
+    with pytest.raises(FloatingPointError, match="non-finite input images"):
+        trainer.fit_task(0, loader, [0], epochs=1)

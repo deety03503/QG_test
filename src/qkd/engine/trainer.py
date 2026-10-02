@@ -31,6 +31,12 @@ class IncrementalTrainer:
         self.encoder = encoder.to(device)
         self.device = device
         self.use_amp = use_amp and device.type == "cuda"
+        self.amp_dtype = (
+            torch.bfloat16
+            if self.use_amp and torch.cuda.is_bf16_supported()
+            else torch.float16
+        )
+        self.use_grad_scaler = self.use_amp and self.amp_dtype == torch.float16
         base_encoder = self._base_encoder
         if not hasattr(base_encoder, "hidden_dim"):
             raise TypeError("encoder must expose hidden_dim")
@@ -103,9 +109,9 @@ class IncrementalTrainer:
         optimizer = torch.optim.SGD(trainable_parameters, lr=learning_rate)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
         if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
-            scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
+            scaler = torch.amp.GradScaler("cuda", enabled=self.use_grad_scaler)
         else:
-            scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+            scaler = torch.cuda.amp.GradScaler(enabled=self.use_grad_scaler)
         class_position = {class_id: index for index, class_id in enumerate(all_seen_classes)}
         seen_column_indices = torch.tensor(all_seen_classes, device=self.device)
         previous_classes = [
@@ -152,9 +158,14 @@ class IncrementalTrainer:
                 desc=f"Task {task_id + 1} | Epoch {epoch + 1}/{epochs}",
                 unit="batch",
             )
-            for images, labels in progress:
+            for batch_index, (images, labels) in enumerate(progress):
                 images = images.to(self.device, non_blocking=True)
                 labels = labels.to(self.device, dtype=torch.long, non_blocking=True)
+                if not torch.isfinite(images).all():
+                    raise FloatingPointError(
+                        f"non-finite input images in task {task_id + 1}, "
+                        f"epoch {epoch + 1}, batch {batch_index + 1}"
+                    )
                 if labels.numel() and (
                     labels.min().item() < 0 or labels.max().item() >= target_lookup.numel()
                 ):
@@ -167,12 +178,22 @@ class IncrementalTrainer:
                 optimizer.zero_grad(set_to_none=True)
                 with torch.autocast(
                     device_type="cuda",
-                    dtype=torch.float16,
+                    dtype=self.amp_dtype,
                     enabled=self.use_amp,
                 ):
                     current_features = self.encoder(images)
                     current_logits = self.classifier(current_features)[:, seen_column_indices]
-                    loss_ce = F.cross_entropy(current_logits, targets)
+                    if not torch.isfinite(current_features).all():
+                        raise FloatingPointError(
+                            f"non-finite encoder features in task {task_id + 1}, "
+                            f"epoch {epoch + 1}, batch {batch_index + 1}"
+                        )
+                    if not torch.isfinite(current_logits).all():
+                        raise FloatingPointError(
+                            f"non-finite classifier logits in task {task_id + 1}, "
+                            f"epoch {epoch + 1}, batch {batch_index + 1}"
+                        )
+                    loss_ce = F.cross_entropy(current_logits.float(), targets)
 
                     if self.task_representations:
                         query_features = self._routed_features(images, task_id=0)
@@ -191,6 +212,14 @@ class IncrementalTrainer:
                         loss_kd = current_logits.new_zeros(())
                         loss_sparse = current_logits.new_zeros(())
                     loss = loss_ce + self.lambda_kd * loss_kd + self.lambda_sparse * loss_sparse
+                    if not torch.isfinite(loss):
+                        raise FloatingPointError(
+                            f"non-finite loss in task {task_id + 1}, epoch {epoch + 1}, "
+                            f"batch {batch_index + 1} "
+                            f"(ce={loss_ce.detach().item()}, "
+                            f"kd={loss_kd.detach().item()}, "
+                            f"sparse={loss_sparse.detach().item()})"
+                        )
 
                 batch_size = labels.size(0)
                 total_loss += loss.detach().item() * batch_size
@@ -213,8 +242,27 @@ class IncrementalTrainer:
                 )
 
                 scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                gradient_norm = torch.nn.utils.clip_grad_norm_(
+                    trainable_parameters,
+                    max_norm=1.0,
+                    error_if_nonfinite=False,
+                )
+                if not scaler.is_enabled() and not torch.isfinite(gradient_norm):
+                    raise FloatingPointError(
+                        f"non-finite gradient norm in task {task_id + 1}, "
+                        f"epoch {epoch + 1}, batch {batch_index + 1}"
+                    )
                 scaler.step(optimizer)
                 scaler.update()
+                if not scaler.is_enabled() and any(
+                    not torch.isfinite(parameter).all()
+                    for parameter in trainable_parameters
+                ):
+                    raise FloatingPointError(
+                        f"optimizer produced non-finite parameters in task {task_id + 1}, "
+                        f"epoch {epoch + 1}, batch {batch_index + 1}"
+                    )
 
             if sample_count == 0:
                 raise ValueError("train_loader must contain at least one batch")

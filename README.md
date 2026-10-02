@@ -49,7 +49,10 @@ losses, plus accuracy over all seen classes and over only the current task's
 classes. The run also evaluates task-agnostically on all classes learned so
 far after every task. It writes checkpoints and a
 `metrics.json` containing stage accuracies, average incremental accuracy, and
-final accuracy to the output directory.
+final accuracy to the output directory. CUDA training uses BF16 autocast when
+supported, otherwise FP16 with gradient scaling, and clips the global gradient
+norm to 1. Non-finite inputs, activations, logits, or losses stop training with
+the task/epoch/batch location instead of silently propagating NaNs.
 
 The simulator adaptively pools each full feature vector to the qubit count,
 normalizes and maps the pooled values to `[-pi, pi]` rotation angles, then
