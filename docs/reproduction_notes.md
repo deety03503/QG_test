@@ -52,8 +52,10 @@ default in the supplied text.
   no-op residual. Each later task copies task 0's adapter parameters at the
   task boundary, then trains that copy while freezing all previous adapters.
 - Training keeps the pretrained backbone and previous adapters frozen; it
-  trains only the current adapter, a global classifier, and the QGTM rotations.
-  The classification head grows with the set of seen class IDs. The TIKD loss
+  trains only the current adapter, the current task's classifier rows, and the
+  QGTM rotations. The classification head grows with the set of seen class IDs.
+  Cross-entropy is computed over the current task's classes only, and previous
+  classifier rows are protected from updates during later tasks. The TIKD loss
   uses relevance-weighted `KL(old adapter || current adapter)` over the
   previous tasks' class logits only; newly introduced classes are excluded
   because historical adapters have no trained outputs for them.
