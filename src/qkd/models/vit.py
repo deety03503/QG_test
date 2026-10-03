@@ -32,7 +32,7 @@ class PretrainedViT(nn.Module):
     def from_pretrained(
         cls,
         checkpoint_path: str | Path,
-        model_name: str = "vit_base_patch16_224",
+        model_name: str = "vit_base_patch16_224.augreg_in21k",
         bottleneck_dim: int = 64,
     ) -> "PretrainedViT":
         """Build a timm ViT and load an explicit checkpoint before adaptation."""

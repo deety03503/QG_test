@@ -22,7 +22,7 @@ from qkd.engine.trainer import IncrementalTrainer
 from qkd.metrics import final_accuracy
 from qkd.models.vit import PretrainedViT
 
-DEFAULT_MODEL_NAME = "vit_base_patch16_224"
+DEFAULT_MODEL_NAME = "vit_base_patch16_224.augreg_in21k"
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,11 +40,19 @@ def parse_args() -> argparse.Namespace:
         ),
         help="Optional local ViT checkpoint. If omitted, use --pretrained or random initialization.",
     )
-    parser.add_argument(
+    pretrained_group = parser.add_mutually_exclusive_group()
+    pretrained_group.add_argument(
         "--pretrained",
         action="store_true",
-        help="Load the model's default pretrained weights from timm (may require internet access).",
+        help="Explicitly load pretrained weights from timm (the default).",
     )
+    pretrained_group.add_argument(
+        "--random-init",
+        dest="pretrained",
+        action="store_false",
+        help="Skip pretrained weights and use a randomly initialized backbone.",
+    )
+    parser.set_defaults(pretrained=True)
     parser.add_argument(
         "--output-dir",
         default=os.environ.get("QKD_OUTPUT_ROOT", "/kaggle/working/qkd_outputs"),
@@ -52,7 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model-name",
         default=DEFAULT_MODEL_NAME,
-        help="timm model/weight tag used when loading pretrained ViT weights.",
+        help="timm model/weight tag; defaults to ViT-B/16 pretrained on ImageNet-21k.",
     )
     parser.add_argument("--seed", type=int, default=1993)
     parser.add_argument("--batch-size", type=int, default=32)
@@ -139,8 +147,6 @@ def load_cifar100(data_root: str, image_transform: Callable | None = None):
 def create_encoder(args: argparse.Namespace) -> PretrainedViT:
     checkpoint_path = Path(args.checkpoint_path).expanduser() if args.checkpoint_path else None
     if checkpoint_path is not None:
-        if args.pretrained:
-            raise ValueError("choose either --checkpoint-path or --pretrained, not both")
         if not checkpoint_path.is_file():
             raise FileNotFoundError(f"ViT checkpoint not found: {checkpoint_path}")
         print(f"Loading pretrained checkpoint: {checkpoint_path}")
@@ -156,7 +162,7 @@ def create_encoder(args: argparse.Namespace) -> PretrainedViT:
         print(f"Loading pretrained ViT weights ({args.model_name}) from timm.")
         backbone = timm.create_model(args.model_name, pretrained=True, num_classes=0)
     else:
-        print("No pretrained weights requested; initializing the backbone randomly.")
+        print("Random initialization requested; initializing the backbone randomly.")
         print("The frozen random backbone is not paper-comparable.")
         backbone = timm.create_model(args.model_name, pretrained=False, num_classes=0)
     return PretrainedViT(backbone, bottleneck_dim=args.bottleneck_dim)
